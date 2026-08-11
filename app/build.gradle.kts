@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -84,6 +85,9 @@ dependencies {
     // source ourselves. The native module (src/main/cpp) links against it
     // via find_package(oboe) in CMakeLists.txt.
     implementation("com.google.oboe:oboe:1.9.0")
+
+    // Phase 1: JSON persistence for Project/Track/LoopBlock/Sample.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     // Phase 6 will add media3/MediaSession.
 

@@ -1,0 +1,66 @@
+[
+  {
+    "id": "kick_basic_01",
+    "name": "Basic Kick",
+    "category": "DRUMS",
+    "assetPath": "loops/kick_basic_01.wav",
+    "durationMs": 2667,
+    "bpm": 90
+  },
+  {
+    "id": "snare_basic_01",
+    "name": "Basic Snare",
+    "category": "DRUMS",
+    "assetPath": "loops/snare_basic_01.wav",
+    "durationMs": 2667,
+    "bpm": 90
+  },
+  {
+    "id": "bass_riff_01",
+    "name": "Bass Riff One",
+    "category": "BASS",
+    "assetPath": "loops/bass_riff_01.wav",
+    "durationMs": 5333,
+    "bpm": 90
+  },
+  {
+    "id": "bass_riff_02",
+    "name": "Bass Riff Two",
+    "category": "BASS",
+    "assetPath": "loops/bass_riff_02.wav",
+    "durationMs": 5333,
+    "bpm": 90
+  },
+  {
+    "id": "synth_chord_01",
+    "name": "Synth Chord",
+    "category": "SYNTH",
+    "assetPath": "loops/synth_chord_01.wav",
+    "durationMs": 2667,
+    "bpm": 90
+  },
+  {
+    "id": "synth_arp_01",
+    "name": "Synth Arp",
+    "category": "SYNTH",
+    "assetPath": "loops/synth_arp_01.wav",
+    "durationMs": 2667,
+    "bpm": 90
+  },
+  {
+    "id": "vocal_oh_01",
+    "name": "Vocal Oh",
+    "category": "VOCAL",
+    "assetPath": "loops/vocal_oh_01.wav",
+    "durationMs": 2667,
+    "bpm": 90
+  },
+  {
+    "id": "vocal_ah_01",
+    "name": "Vocal Ah",
+    "category": "VOCAL",
+    "assetPath": "loops/vocal_ah_01.wav",
+    "durationMs": 2667,
+    "bpm": 90
+  }
+]
