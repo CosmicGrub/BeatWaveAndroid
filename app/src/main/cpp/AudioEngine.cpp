@@ -1,9 +1,13 @@
 #include "AudioEngine.h"
 
+#include <algorithm>
 #include <android/log.h>
+#include <chrono>
 #include <cstring>
+#include <thread>
 
 #include "MixEngine.h"
+#include "WavWriter.h"
 
 #define TAG "BeatWaveAudioEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -11,8 +15,33 @@
 
 namespace beatwave {
 
+namespace {
+// Bounded spin-wait parameters for waitForInputReadQuiescence(): a real
+// output-callback period is a few milliseconds, so polling every 200us
+// and capping at 2000 iterations (~400ms) is generous headroom while still
+// guaranteeing a stuck/dead audio thread can't hang the caller forever.
+constexpr auto kQuiescencePollInterval = std::chrono::microseconds(200);
+constexpr int kQuiescenceMaxPolls = 2000;
+} // namespace
+
 AudioEngine::AudioEngine(int32_t offlineSampleRateHz)
         : mOfflineSampleRateHz(offlineSampleRateHz) {}
+
+AudioEngine::~AudioEngine() {
+    // Best-effort cleanup if a recording was somehow still active when the
+    // engine is destroyed. Never runs on the audio thread (nothing here is
+    // called from onAudioReady). Unpublish, THEN wait for quiescence, THEN
+    // close -- see mInputReadInFlight's doc comment for why the wait is
+    // required and not just the unpublish (a data race / use-after-free
+    // hazard on close() otherwise).
+    if (mInputStream) {
+        mInputStreamPtr.store(nullptr, std::memory_order_release);
+        waitForInputReadQuiescence();
+        mInputStream->requestStop();
+        mInputStream->close();
+        mInputStream.reset();
+    }
+}
 
 void AudioEngine::init(AAssetManager *assetManager) {
     mAssetManager = assetManager;
@@ -201,6 +230,69 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
 
     renderScore(score, transportFrameStart, numFrames, channelCount, floatData);
 
+    // Phase 5, mandate 1: while a recording is active, read exactly once
+    // from the (already-open, blocking-mode) input stream for this
+    // callback's numFrames and feed the result through the same
+    // captureRecordingFrames derivation the offline/test path uses (mandate
+    // 8). Skipped entirely when not recording -- the input stream is never
+    // opened or read otherwise (lazy-open contract, see startRecording()).
+    if (mRecording.load(std::memory_order_acquire)) {
+        // Publish "a read may be in flight" BEFORE loading mInputStreamPtr,
+        // and only clear it after the read (or the null-pointer check) is
+        // fully done -- this is the quiescence signal stopRecording()/
+        // ~AudioEngine() wait on before they close() the stream (see
+        // mInputReadInFlight's doc comment in AudioEngine.h). Must bracket
+        // the pointer load too, not just the read() call: otherwise the
+        // window between loading a still-valid pointer and setting the flag
+        // would be unprotected.
+        mInputReadInFlight.store(true, std::memory_order_release);
+        oboe::AudioStream *input = mInputStreamPtr.load(std::memory_order_acquire);
+        if (input != nullptr) {
+            const int32_t inputChannelCount = input->getChannelCount();
+#ifndef NDEBUG
+            if (numFrames > kMaxInputScratchFrames) {
+                // Nit-level guard, debug builds only: an unconditional LOGE
+                // here would itself be real-time I/O in the release-build
+                // callback (the exact class of bug the sibling findings on
+                // this same block are about) for a condition not expected on
+                // any real device/perf-mode this app targets (observed
+                // framesPerBurst=960 at 48kHz vs. kMaxInputScratchFrames=
+                // 4096) -- but Oboe/AAudio doesn't strictly guarantee a
+                // callback's numFrames can never exceed that under
+                // scheduling pressure, so surface a real occurrence during
+                // development rather than letting dropped input silently
+                // masquerade as "the mic went quiet" in a real recording
+                // (see captureRecordingFrames' silence-fill fallback below).
+                LOGE("onAudioReady: numFrames (%d) exceeds kMaxInputScratchFrames (%d) -- "
+                     "%d input frames this callback will be captured as silence",
+                     numFrames, kMaxInputScratchFrames, numFrames - kMaxInputScratchFrames);
+            }
+#endif
+            const int32_t framesToRead = std::min(numFrames, kMaxInputScratchFrames);
+            // Zero timeout -- matches Oboe's own FullDuplexStream::readInput()
+            // reference implementation exactly (see oboe/FullDuplexStream.h:
+            // "getInputStream()->read(mInputBuffer.get(), numFrames,
+            // 0 /* timeout */)"). A non-zero timeout would block THIS
+            // real-time OUTPUT callback thread for up to that duration if the
+            // input stream is even momentarily short on buffered frames
+            // (e.g. the first few callbacks after startRecording() opens the
+            // input stream, before input/output reach equilibrium) --
+            // exactly the class of bug mandate 7 ("zero locking/IO in the
+            // callback") exists to prevent, and it would also widen the
+            // use-after-free race window this quiescence mechanism closes. A
+            // short/zero read is not an error: captureRecordingFrames()
+            // already treats "fewer than numFrames valid" as "no new input
+            // this callback" and fills the gap with explicit silence.
+            oboe::ResultWithValue<int32_t> result =
+                    input->read(mInputScratchBuffer.data(), framesToRead, 0 /* timeoutNanoseconds */);
+            const int32_t validInputFrames = result ? std::max(0, result.value()) : 0;
+            captureRecordingFrames(
+                    transportFrameStart, numFrames, validInputFrames,
+                    mInputScratchBuffer.data(), inputChannelCount);
+        }
+        mInputReadInFlight.store(false, std::memory_order_release);
+    }
+
     // Mandate 6: the ONE master transport counter, advanced by exactly
     // numFrames every callback. Nothing else in this engine tracks time.
     mTransportFrame.fetch_add(numFrames, std::memory_order_relaxed);
@@ -215,6 +307,14 @@ void AudioEngine::renderOffline(int32_t numFrames, float *scratchBuffer) {
     // Same function, same derivation path as onAudioReady (mandate 10) --
     // the test cares about internal position state, not this audio content.
     renderScore(score, transportFrameStart, numFrames, kChannelCount, scratchBuffer);
+
+    // Phase 5, mandate 8: if a test recording is active (testStartRecording()
+    // was called), feed silence through the exact same captureRecordingFrames
+    // derivation the live callback uses -- no real hardware, no separate
+    // implementation of the position math to audit.
+    if (mRecording.load(std::memory_order_acquire)) {
+        captureRecordingFrames(transportFrameStart, numFrames, /*validInputFrames=*/0, /*inputInterleaved=*/nullptr, /*inputChannelCount=*/0);
+    }
 
     mTransportFrame.fetch_add(numFrames, std::memory_order_relaxed);
 }
@@ -262,6 +362,278 @@ int64_t AudioEngine::testGetLoopLocalFrame(int32_t trackSlot, int32_t blockIndex
     // Mandate 10: reuses the exact same nonNegativeMod helper renderScore
     // uses (see MixEngine.h) -- no separate/duplicated derivation formula.
     return nonNegativeMod(framesSinceBlockStart, block->loopContentLengthFrames);
+}
+
+// ============================================================================
+// Phase 5: recording
+// ============================================================================
+
+void AudioEngine::beginRecordingCommon() {
+    const int32_t sampleRate = getSampleRate();
+    const int64_t capacityFrames = static_cast<int64_t>(sampleRate) * static_cast<int64_t>(kMaxRecordingSeconds);
+
+    // Mandate 3: pre-allocate (and re-zero, so a reused buffer from a prior
+    // take never leaks stale samples into gaps of THIS take -- see
+    // captureRecordingFrames' doc comment on why unwritten indices must read
+    // back as silence) here, off the audio thread, once per recording start
+    // -- never touched again until the NEXT startRecording()/
+    // testStartRecording() call.
+    mRecordingBuffer.assign(static_cast<size_t>(capacityFrames) * static_cast<size_t>(kChannelCount), 0.0f);
+    mRecordingCapacityFrames = capacityFrames;
+
+    mRecordingCapReached.store(false, std::memory_order_relaxed);
+    mRecordedFrameCount.store(0, std::memory_order_relaxed);
+    // Mandate 4: recordingStartFrame is itself just a read of the SAME
+    // absolute transport counter mandate 6 already maintains -- no separate
+    // clock, no separate synchronization problem.
+    mRecordingStartFrame.store(mTransportFrame.load(std::memory_order_relaxed), std::memory_order_relaxed);
+
+    // Published last, release-ordered: onAudioReady/renderOffline only ever
+    // acquire-load mRecording, so everything above is guaranteed visible to
+    // them once they observe it flip to true.
+    mRecording.store(true, std::memory_order_release);
+}
+
+bool AudioEngine::startRecording() {
+    if (mRecording.load(std::memory_order_relaxed)) {
+        LOGE("startRecording() called while a recording is already in progress");
+        return false;
+    }
+    const int32_t sampleRate = getSampleRate();
+    if (sampleRate <= 0) {
+        LOGE("startRecording() called before a sample rate is known -- call start() first");
+        return false;
+    }
+
+    // Mandate 1: lazily open the input stream -- only here, only on the
+    // first (or first-since-the-last-stop) startRecording() call, never at
+    // init()/start() time. BLOCKING mode (no setDataCallback()) so
+    // onAudioReady can read() from it synchronously.
+    oboe::AudioStreamBuilder builder;
+    builder.setDirection(oboe::Direction::Input)
+            ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+            ->setSharingMode(oboe::SharingMode::Exclusive)
+            ->setFormat(oboe::AudioFormat::Float)
+            ->setChannelCount(oboe::ChannelCount::Stereo)
+            ->setSampleRate(sampleRate);
+
+    std::shared_ptr<oboe::AudioStream> inputStream;
+    oboe::Result result = builder.openStream(inputStream);
+    if (result != oboe::Result::OK) {
+        LOGE("Failed to open input stream: %s", oboe::convertToText(result));
+        return false;
+    }
+
+    result = inputStream->requestStart();
+    if (result != oboe::Result::OK) {
+        LOGE("Failed to start input stream: %s", oboe::convertToText(result));
+        inputStream->close();
+        return false;
+    }
+
+    // Pre-allocated once, off the audio thread, before publishing -- the
+    // callback only ever reads into this, never resizes it (mandate 7).
+    mInputScratchBuffer.assign(static_cast<size_t>(kMaxInputScratchFrames) * static_cast<size_t>(kChannelCount), 0.0f);
+
+    // mInputStream (ownership) assigned, THEN mInputStreamPtr published,
+    // BOTH before beginRecordingCommon()'s mRecording release store below --
+    // see AudioEngine.h's doc comment on why the input stream needs a
+    // distinct atomic raw pointer rather than a plain shared_ptr read from
+    // the audio thread. Sequencing this before beginRecordingCommon() means
+    // a single acquire-load of mRecording==true on the audio thread is
+    // sufficient to safely observe mInputStreamPtr too (transitively, via
+    // mRecording's own release store) -- one clean publish point rather than
+    // two independent ones the audio thread would have to reason about.
+    mInputStream = inputStream;
+    mInputStreamPtr.store(mInputStream.get(), std::memory_order_release);
+
+    beginRecordingCommon();
+
+    // Mandate 7: reuse play()'s existing logic rather than duplicating it --
+    // starting a recording also starts (or continues) transport playback.
+    play();
+
+    return true;
+}
+
+void AudioEngine::waitForInputReadQuiescence() {
+    // MUST be called after mInputStreamPtr has already been unpublished
+    // (store nullptr) by the caller -- see mInputReadInFlight's doc comment
+    // in AudioEngine.h. Bounded spin-wait: this runs off the audio thread,
+    // in a rare, user-driven event (stopping a recording / tearing down the
+    // engine), not a hot path, so a short sleep-based poll is an acceptable
+    // trade for not needing a condition variable the real-time audio thread
+    // would have to touch.
+    for (int i = 0; i < kQuiescenceMaxPolls; ++i) {
+        if (!mInputReadInFlight.load(std::memory_order_acquire)) {
+            return;
+        }
+        std::this_thread::sleep_for(kQuiescencePollInterval);
+    }
+    LOGE("waitForInputReadQuiescence() timed out after %dus x %d polls -- "
+         "proceeding to close() the input stream anyway",
+         static_cast<int>(kQuiescencePollInterval.count()), kQuiescenceMaxPolls);
+}
+
+int64_t AudioEngine::stopRecording(const std::string &outputFilePath) {
+    if (!mRecording.exchange(false, std::memory_order_acq_rel)) {
+        LOGE("stopRecording() called while no recording was in progress");
+        return -1;
+    }
+
+    // Unpublish first so no callback that hasn't already grabbed the
+    // pointer will start a new read() on a stream we're about to close.
+    mInputStreamPtr.store(nullptr, std::memory_order_release);
+
+    // Then wait for any read() the audio thread had ALREADY started (having
+    // loaded the pointer before the unpublish above) to actually finish --
+    // unlike mStream's teardown, Oboe gives no cross-thread safety guarantee
+    // for a foreign thread's ad hoc read() on a stream with no data callback
+    // of its own (see mInputReadInFlight's doc comment in AudioEngine.h).
+    // Only once this returns is it safe to close().
+    waitForInputReadQuiescence();
+
+    if (mInputStream) {
+        mInputStream->requestStop();
+        mInputStream->close();
+        mInputStream.reset();
+    }
+
+    return finishRecordingCommon(outputFilePath);
+}
+
+bool AudioEngine::isRecording() const {
+    return mRecording.load(std::memory_order_relaxed);
+}
+
+int64_t AudioEngine::getRecordingStartFrame() const {
+    return mRecordingStartFrame.load(std::memory_order_relaxed);
+}
+
+int64_t AudioEngine::getRecordedFrameCount() const {
+    return mRecordedFrameCount.load(std::memory_order_acquire);
+}
+
+double AudioEngine::getInputLatencyMillis() const {
+    oboe::AudioStream *input = mInputStreamPtr.load(std::memory_order_acquire);
+    if (input == nullptr) {
+        return -1.0;
+    }
+    oboe::ResultWithValue<double> result = input->calculateLatencyMillis();
+    return result ? result.value() : -1.0;
+}
+
+double AudioEngine::getOutputLatencyMillis() const {
+    if (!mStream) {
+        return -1.0;
+    }
+    oboe::ResultWithValue<double> result = mStream->calculateLatencyMillis();
+    return result ? result.value() : -1.0;
+}
+
+bool AudioEngine::isRecordingCapReached() const {
+    return mRecordingCapReached.load(std::memory_order_relaxed);
+}
+
+void AudioEngine::testStartRecording() {
+    // Mandate 8: same pre-allocation/start-frame-capture logic as
+    // startRecording(), just never opens a real input stream -- mInputStream
+    // / mInputStreamPtr stay null, so onAudioReady is irrelevant here; this
+    // offline engine is driven via renderOffline() instead.
+    beginRecordingCommon();
+}
+
+int64_t AudioEngine::testStopRecording(const std::string &outputFilePath) {
+    if (!mRecording.exchange(false, std::memory_order_acq_rel)) {
+        LOGE("testStopRecording() called while no test recording was in progress");
+        return -1;
+    }
+    return finishRecordingCommon(outputFilePath);
+}
+
+int64_t AudioEngine::finishRecordingCommon(const std::string &outputFilePath) {
+    // Acquire load: happens-before paired with captureRecordingFrames'
+    // release store (see its doc comment) -- guarantees every write to
+    // mRecordingBuffer[0, frameCount) already happened-before this load, so
+    // reading that range here (from a thread that isn't the audio thread) is
+    // safe with zero locking.
+    const int64_t frameCount = mRecordedFrameCount.load(std::memory_order_acquire);
+    if (frameCount <= 0) {
+        return -1;
+    }
+    const bool ok = WavWriter::writeFile(outputFilePath, mRecordingBuffer.data(), frameCount, kChannelCount, getSampleRate());
+    return ok ? frameCount : -1;
+}
+
+void AudioEngine::captureRecordingFrames(
+        int64_t transportFrameStart,
+        int32_t numFrames,
+        int32_t validInputFrames,
+        const float *inputInterleaved,
+        int32_t inputChannelCount) {
+    if (mRecordingCapReached.load(std::memory_order_relaxed)) {
+        return; // mandate 3: already hit the cap -- stop capturing, don't crash, don't reallocate
+    }
+
+    const int64_t recordingStartFrame = mRecordingStartFrame.load(std::memory_order_relaxed);
+    const int64_t capacityFrames = mRecordingCapacityFrames;
+    int64_t highWaterMark = mRecordedFrameCount.load(std::memory_order_relaxed);
+    bool capHit = false;
+
+    for (int32_t i = 0; i < numFrames; ++i) {
+        // Mandate 4 -- mirrors mandate 6's core derivation EXACTLY: every
+        // frame's recording-buffer index is derived fresh, every callback,
+        // from the SAME single absolute transport counter driving playback
+        // (transportFrameStart + i) minus the fixed recordingStartFrame
+        // captured once at start. No separately incrementally-advanced
+        // per-recording counter is ever stored.
+        const int64_t transportFrame = transportFrameStart + i;
+        const int64_t recordFrameIndex = transportFrame - recordingStartFrame;
+        if (recordFrameIndex < 0) {
+            continue; // recording hadn't started yet at this frame
+        }
+        if (recordFrameIndex >= capacityFrames) {
+            capHit = true;
+            break;
+        }
+
+        float *dst = mRecordingBuffer.data() + static_cast<size_t>(recordFrameIndex) * static_cast<size_t>(kChannelCount);
+        if (i < validInputFrames && inputInterleaved != nullptr && inputChannelCount > 0) {
+            const float *src = inputInterleaved + static_cast<size_t>(i) * static_cast<size_t>(inputChannelCount);
+            for (int32_t ch = 0; ch < kChannelCount; ++ch) {
+                const int32_t srcCh = (inputChannelCount <= 1) ? 0 : (ch % inputChannelCount);
+                dst[ch] = src[srcCh];
+            }
+        } else {
+            // Offline/test path (mandate 8), or a live callback where the
+            // input read came up short this callback (e.g. a momentary
+            // underrun) -- explicit silence rather than leaving whatever was
+            // last in the buffer, so the recording's timeline still
+            // corresponds 1:1 to elapsed transport frames even across a gap.
+            for (int32_t ch = 0; ch < kChannelCount; ++ch) {
+                dst[ch] = 0.0f;
+            }
+        }
+
+        if (recordFrameIndex + 1 > highWaterMark) {
+            highWaterMark = recordFrameIndex + 1;
+        }
+    }
+
+    if (highWaterMark > mRecordedFrameCount.load(std::memory_order_relaxed)) {
+        // Publish via release -- mirrors mScore's atomic-publish pattern
+        // (see AudioEngine.h's mScore doc comment): every mRecordingBuffer
+        // write for index < highWaterMark happens-before this store, so any
+        // thread that acquire-loads mRecordedFrameCount and observes a value
+        // >= highWaterMark is guaranteed to see fully-written data for those
+        // indices -- this is exactly what lets stopRecording()/
+        // testStopRecording() read the buffer lock-free from off the audio
+        // thread (see finishRecordingCommon()).
+        mRecordedFrameCount.store(highWaterMark, std::memory_order_release);
+    }
+    if (capHit) {
+        mRecordingCapReached.store(true, std::memory_order_relaxed);
+    }
 }
 
 } // namespace beatwave

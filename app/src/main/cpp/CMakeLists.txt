@@ -9,6 +9,7 @@ add_library(beatwave_audio SHARED
         audio_engine_jni.cpp
         AudioEngine.cpp
         WavDecoder.cpp
+        WavWriter.cpp
         SampleBank.cpp
         ScoreBuilder.cpp
         MixEngine.cpp

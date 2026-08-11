@@ -85,4 +85,21 @@ class ProjectPlaybackController(private val context: Context) {
     fun seekToFrame(frame: Long) = AudioEngineBridge.seekToFrame(frame)
     fun getCurrentFrame(): Long = AudioEngineBridge.getCurrentFrame()
     fun getSampleRate(): Int = AudioEngineBridge.getSampleRate()
+
+    // --- Recording (Phase 5) -- thin delegation to AudioEngineBridge,
+    // mirroring the transport controls above exactly. Same threading
+    // contract as those: cheap/safe from any thread, but callers must
+    // still route them through ArrangementViewModel's companion-object
+    // engineMutex like every other engine-touching call (see that class's
+    // SERIALIZATION note) -- see AudioEngineBridge's "Recording" section
+    // for the full contract. ---
+
+    fun startRecording(): Boolean = AudioEngineBridge.startRecording()
+    fun stopRecording(outputFilePath: String): Long = AudioEngineBridge.stopRecording(outputFilePath)
+    fun isRecording(): Boolean = AudioEngineBridge.isRecording()
+    fun getRecordingStartFrame(): Long = AudioEngineBridge.getRecordingStartFrame()
+    fun getRecordedFrameCount(): Long = AudioEngineBridge.getRecordedFrameCount()
+    fun getInputLatencyMillis(): Double = AudioEngineBridge.getInputLatencyMillis()
+    fun getOutputLatencyMillis(): Double = AudioEngineBridge.getOutputLatencyMillis()
+    fun isRecordingCapReached(): Boolean = AudioEngineBridge.isRecordingCapReached()
 }

@@ -98,6 +98,11 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    // Phase 5: GrantPermissionRule, for auto-granting RECORD_AUDIO in the
+    // real-hardware full-duplex capture instrumented test (mandate 11b) --
+    // without this the OS permission dialog would steal window focus/block
+    // the test instead of running unattended.
+    androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation(composeBom)
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")

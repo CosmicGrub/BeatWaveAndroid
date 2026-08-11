@@ -50,6 +50,25 @@ data class PendingImportSample(
 )
 
 /**
+ * A successfully-stopped recording (Phase 5 design item 10) waiting on the
+ * user's category choice before [ArrangementViewModel.confirmPendingRecording]
+ * finalizes it into a [Sample] AND auto-places a [LoopBlock] on the armed
+ * track -- mirrors [PendingImportSample]'s Phase 4 shape, but additionally
+ * carries the placement ([trackSlot]/[startGridUnit]/[lengthGridUnits])
+ * already computed (via [GridConstants]) at the moment recording stopped,
+ * since a recording -- unlike a plain library import -- always produces a
+ * placed block, never just a library entry.
+ */
+data class PendingRecordingSample(
+    val trackSlot: Int,
+    val filePath: String,
+    val displayName: String,
+    val startGridUnit: Int,
+    val lengthGridUnits: Int,
+    val durationMs: Long
+)
+
+/**
  * All UI-observable state for [ArrangementScreen] and its children. [project]
  * is null only during the brief initial load in [ArrangementViewModel.init].
  *
@@ -69,6 +88,17 @@ data class ArrangementUiState(
     val sampleRate: Int = 0,
     val editingBlock: TrackBlockRef? = null,
     val pendingImport: PendingImportSample? = null,
+    /** The track slot currently armed+recording, or null if no recording is
+     *  in progress. Only one recording can be in flight at a time -- the
+     *  native engine has a single pre-allocated capture buffer, not one per
+     *  track -- so this is Kotlin-side bookkeeping of which track "owns"
+     *  the in-progress recording; the native engine itself has no notion of
+     *  tracks during capture. */
+    val recordingTrackSlot: Int? = null,
+    /** Live progress (frames captured so far) for [recordingTrackSlot]'s
+     *  indicator, polled the same way [currentFrame] already is. */
+    val recordedFrameCount: Long = 0L,
+    val pendingRecording: PendingRecordingSample? = null,
     val message: String? = null
 )
 
@@ -283,6 +313,17 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
 
     fun togglePlayPause() {
         if (_uiState.value.isPlaying) {
+            // Defense-in-depth guard mirroring the UI's own disabled state
+            // (see ArrangementScreen's PlaybackControlBar): pausing mid-
+            // recording would stop draining the still-open, still-capturing
+            // input stream (onAudioReady returns early on !mPlaying, before
+            // it ever reaches the recording-capture block), letting real
+            // hardware audio silently accumulate/overflow in Oboe's own
+            // buffer until playback resumes -- corrupting the take's
+            // alignment. Only the per-track Stop-record affordance and the
+            // global Stop button (stopPlayback, which finalizes an
+            // in-progress recording) may end a recording session.
+            if (_uiState.value.recordingTrackSlot != null) return
             playbackController.pause()
             playheadJob?.cancel()
             _uiState.update { it.copy(isPlaying = false) }
@@ -294,12 +335,37 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun stopPlayback() {
-        playbackController.stop()
-        playheadJob?.cancel()
-        _uiState.update { it.copy(isPlaying = false, currentFrame = 0L) }
+        viewModelScope.launch(Dispatchers.Default) {
+            // A live recording has no valid "finished take" if the transport
+            // is about to be reset to 0 out from under it. AWAIT (don't
+            // fire-and-forget) the SAME finalize path the per-track Stop
+            // button uses (see [ensureRecordingFinalizing]/[finalizeRecording])
+            // before touching the native transport below -- both paths touch
+            // the SAME engine state (mRecording/mRecordingStartFrame/the
+            // input stream) via engineMutex, and must not interleave. A fast
+            // Stop-then-Play could otherwise resume native capture into a
+            // not-yet-finalized recording buffer, indexed against a
+            // transport that's already been reset to 0.
+            ensureRecordingFinalizing()?.join()
+            playbackController.stop()
+            playheadJob?.cancel()
+            _uiState.update { it.copy(isPlaying = false, currentFrame = 0L) }
+        }
     }
 
     fun seekToGridUnit(gridUnit: Int) {
+        // Guard against a discontinuous transport jump corrupting an
+        // in-progress recording: captureRecordingFrames (native) derives
+        // every frame's recording-buffer index from transportFrame -
+        // recordingStartFrame every callback (mandate 4) -- an intervening
+        // seek would jump-cut the recording's own timeline (skipped frames
+        // going forward, an overlapping rewrite going backward) with no
+        // warning to the user. Only the per-track Stop-record affordance and
+        // the global Stop button may end a recording session.
+        if (_uiState.value.recordingTrackSlot != null) {
+            _uiState.update { it.copy(message = "Can't seek while recording -- stop the recording first.") }
+            return
+        }
         val project = _uiState.value.project ?: return
         val sampleRate = playbackController.getSampleRate()
         if (sampleRate <= 0) return
@@ -314,7 +380,25 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         playheadJob = viewModelScope.launch {
             while (isActive && _uiState.value.isPlaying) {
                 val frame = playbackController.getCurrentFrame()
-                _uiState.update { it.copy(currentFrame = frame) }
+                // Reuses this SAME polling loop for the live recording
+                // indicator (design item 10) rather than inventing a
+                // second polling mechanism -- recording is always
+                // concurrent with playback (see startRecording's play()
+                // call), so one loop covers both.
+                val isRecording = _uiState.value.recordingTrackSlot != null
+                val recordedFrames = if (isRecording) {
+                    playbackController.getRecordedFrameCount()
+                } else {
+                    0L
+                }
+                _uiState.update { it.copy(currentFrame = frame, recordedFrameCount = recordedFrames) }
+                // Mandate 3: the native buffer cap (~3 min) can be hit
+                // mid-recording; auto-stop gracefully with whatever was
+                // captured rather than silently dropping frames forever.
+                if (isRecording && playbackController.isRecordingCapReached()) {
+                    _uiState.update { it.copy(message = "Recording reached the maximum length and was stopped automatically.") }
+                    stopRecording()
+                }
                 delay(PLAYHEAD_POLL_INTERVAL_MS)
             }
         }
@@ -438,6 +522,255 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    // --- Recording (Phase 5 design items 9-10) ---
+    //
+    // Mirrors the SAF import pipeline's pending-then-confirm shape
+    // (PendingImportSample/confirmPendingImport, Phase 4) but for a
+    // freshly recorded take: [stopRecording] stashes a
+    // [PendingRecordingSample] so the UI can show the SAME
+    // [CategoryPickerDialog], and [confirmPendingRecording] finalizes it
+    // into a Sample AND auto-places a LoopBlock on the armed track via the
+    // EXISTING [rebuildAndPersist]/[engineMutex] path -- unlike a plain
+    // import, a recording always produces a placed block (per the design
+    // spec's "produces a new loop block on that track"), never just a
+    // library entry. Android permission handling (RECORD_AUDIO) lives in
+    // ArrangementScreen, not here -- these methods assume the caller has
+    // already confirmed the permission is granted before calling
+    // [startRecording].
+
+    /** Job for the currently in-flight (or most recently launched) recording
+     *  finalize coroutine -- see [ensureRecordingFinalizing]/
+     *  [finalizeRecording]. [Volatile] because it's read/written from both
+     *  the main thread (a direct [stopRecording] tap) and from
+     *  [stopPlayback]'s own background coroutine, which needs to reliably
+     *  see a finalize [stopRecording] just kicked off so it can await the
+     *  SAME job rather than racing a second, duplicate finalize attempt. */
+    @Volatile
+    private var recordingFinalizeJob: Job? = null
+
+    /** Requests the native engine to begin capture for [trackSlot] (the
+     *  track the user tapped Record on). Also starts/continues arrangement
+     *  playback per the design spec's arm-and-play UX, by reusing the
+     *  existing [ProjectPlaybackController.play] -- never duplicating its
+     *  logic. No-ops (with a message) if a recording is already in
+     *  progress on another track, since the native engine supports only
+     *  one recording at a time. */
+    fun startRecording(trackSlot: Int) {
+        val current = _uiState.value
+        if (current.recordingTrackSlot != null) {
+            _uiState.update { it.copy(message = "A recording is already in progress on another track.") }
+            return
+        }
+        if (current.project == null) return
+        // Optimistically claim the recording slot synchronously, BEFORE the
+        // async engine call completes -- otherwise a rapid double-tap on the
+        // SAME track's Record button would have both taps read
+        // recordingTrackSlot == null (the first tap's coroutine hasn't
+        // updated state yet) and both pass the guard above, racing two
+        // native startRecording() calls (the native side rejects the
+        // second, surfacing a misleading "microphone unavailable" message
+        // even though a recording is in fact already running). Mirrors how
+        // [finalizeRecording] already updates recordingTrackSlot synchronously
+        // relative to its own native call.
+        _uiState.update { it.copy(recordingTrackSlot = trackSlot, recordedFrameCount = 0L) }
+        viewModelScope.launch(Dispatchers.Default) {
+            val started = engineMutex.withLock {
+                val ok = playbackController.startRecording()
+                if (ok) {
+                    playbackController.play()
+                }
+                ok
+            }
+            if (started) {
+                _uiState.update { it.copy(isPlaying = true) }
+                startPlayheadPolling()
+            } else {
+                _uiState.update {
+                    it.copy(recordingTrackSlot = null, message = "Couldn't start recording -- microphone unavailable.")
+                }
+            }
+        }
+    }
+
+    /** Called by ArrangementScreen when the user declines the RECORD_AUDIO
+     *  permission prompt -- surfaces a clear message via the existing
+     *  Snackbar-style [ArrangementUiState.message] field rather than
+     *  silently no-opping. */
+    fun recordingPermissionDenied() {
+        _uiState.update { it.copy(message = "Microphone permission is needed to record.") }
+    }
+
+    /** Starts finalizing the in-progress recording if one hasn't already
+     *  been kicked off (idempotent -- returns the existing in-flight job
+     *  instead of launching a duplicate), or returns null if nothing is
+     *  currently recording. Callers that need the native transport left in
+     *  a consistent state relative to the finalize (see [stopPlayback])
+     *  MUST await the returned [Job] before touching engine state
+     *  themselves -- see [finalizeRecording]'s doc comment for the
+     *  regression this closes. */
+    private fun ensureRecordingFinalizing(): Job? {
+        recordingFinalizeJob?.takeIf { it.isActive }?.let { return it }
+        if (_uiState.value.recordingTrackSlot == null) return null
+        val job = viewModelScope.launch(Dispatchers.Default) { finalizeRecording() }
+        recordingFinalizeJob = job
+        return job
+    }
+
+    /** Called by ArrangementScreen when the user taps a track's Stop-record
+     *  affordance. Fire-and-forget from the UI's perspective (matches the
+     *  original signature/call site), but internally routes through
+     *  [ensureRecordingFinalizing] so a subsequent [stopPlayback] can await
+     *  the SAME job instead of racing a second finalize attempt. */
+    fun stopRecording() {
+        ensureRecordingFinalizing()
+    }
+
+    /** Stops the in-progress recording (see [startRecording]), reads back
+     *  the real captured start frame + frame count via the SAME native
+     *  derivation the live callback used, and either discards a too-short
+     *  accidental take or stashes it as [ArrangementUiState.pendingRecording]
+     *  so the UI shows [CategoryPickerDialog] (reused verbatim from Phase
+     *  4) before finalizing it (see [confirmPendingRecording]).
+     *
+     *  [ArrangementUiState.recordingTrackSlot] is deliberately left non-null
+     *  until AFTER the engineMutex-protected native stopRecording() call
+     *  below actually completes (rather than being nulled synchronously up
+     *  front) -- this keeps every recordingTrackSlot-gated guard (the global
+     *  Play/Pause button's disabled state, [togglePlayPause]'s pause guard,
+     *  [seekToGridUnit]'s seek guard) accurate for the WHOLE finalize
+     *  window, not just until this function happens to be entered. Only
+     *  reachable via [ensureRecordingFinalizing], which dedupes concurrent
+     *  callers via [recordingFinalizeJob] so this never runs twice for the
+     *  same recording. Always call via [ensureRecordingFinalizing] --
+     *  never launch this directly. */
+    private suspend fun finalizeRecording() {
+        val current = _uiState.value
+        val trackSlot = current.recordingTrackSlot ?: return
+        val project = current.project ?: return
+        val sampleRate = current.sampleRate
+
+        val recordingsDir = File(getApplication<Application>().filesDir, RECORDINGS_DIR_NAME)
+        if (!recordingsDir.exists()) recordingsDir.mkdirs()
+        val outputFile = File(recordingsDir, "${UUID.randomUUID()}.wav")
+
+        val (startFrame, framesWritten) = engineMutex.withLock {
+            // Read the start frame BEFORE stopRecording() -- its
+            // validity after the native side closes the input stream
+            // is unspecified, so this order is the safe one.
+            val start = playbackController.getRecordingStartFrame()
+            val frames = playbackController.stopRecording(outputFile.absolutePath)
+            start to frames
+        }
+
+        // Only now -- after the native engine has actually stopped
+        // capturing and closed the input stream -- is it safe to treat this
+        // track as "not recording" again (see this function's doc comment).
+        _uiState.update { it.copy(recordingTrackSlot = null) }
+
+        if (framesWritten <= 0L || sampleRate <= 0) {
+            outputFile.delete()
+            _uiState.update { it.copy(message = "Recording failed -- nothing was captured.") }
+            return
+        }
+
+        val durationMs = framesWritten * 1000L / sampleRate.toLong()
+        if (durationMs < MIN_RECORDING_DURATION_MS) {
+            outputFile.delete()
+            _uiState.update { it.copy(message = "Recording too short -- discarded.") }
+            return
+        }
+
+        // Grid-alignment math (mandates 4/10): both values derived via
+        // the SAME GridConstants conversion functions
+        // RecordingGridAlignmentTest (mandate 11a) exercises directly --
+        // never a separately invented/duplicated formula.
+        val startGridUnit = GridConstants.startGridUnitForFrame(startFrame, project.bpm, sampleRate)
+        val lengthGridUnits = GridConstants.lengthGridUnitsForFrameCount(framesWritten, project.bpm, sampleRate)
+
+        _uiState.update {
+            it.copy(
+                pendingRecording = PendingRecordingSample(
+                    trackSlot = trackSlot,
+                    filePath = outputFile.absolutePath,
+                    displayName = "Recording ${recordingTimestampLabel()}",
+                    startGridUnit = startGridUnit,
+                    lengthGridUnits = lengthGridUnits,
+                    durationMs = durationMs
+                )
+            )
+        }
+    }
+
+    /** Dismisses [ArrangementUiState.pendingRecording] without adding it to
+     *  the library (mirrors [cancelPendingImport] exactly) -- the WAV file
+     *  is no longer referenced by anything once dismissed, so it's deleted
+     *  off the main thread. Best-effort: a failed delete here isn't
+     *  user-visible and isn't worth surfacing. */
+    fun cancelPendingRecording() {
+        val pending = _uiState.value.pendingRecording
+        _uiState.update { it.copy(pendingRecording = null) }
+        if (pending != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                File(pending.filePath).delete()
+            }
+        }
+    }
+
+    /** Finalizes [ArrangementUiState.pendingRecording] into a [Sample]
+     *  tagged with the user's chosen [category] (mirrors
+     *  [confirmPendingImport]), persists it via the EXISTING
+     *  [ImportedSampleIndex] (a recording and an import are structurally
+     *  identical Sample entries from the model's perspective), merges it
+     *  into the SAME combined samples/sampleList state, AND -- unlike a
+     *  plain import -- auto-places a new [LoopBlock] on the armed track at
+     *  the grid position already computed in [stopRecording], via the
+     *  EXISTING [rebuildAndPersist] (engineMutex-guarded) path every other
+     *  project mutation in this class already uses. */
+    fun confirmPendingRecording(category: SampleCategory) {
+        val pending = _uiState.value.pendingRecording ?: return
+        val project = _uiState.value.project
+        _uiState.update { it.copy(pendingRecording = null) }
+        if (project == null) return
+        viewModelScope.launch(Dispatchers.Default) {
+            val sample = Sample(
+                id = UUID.randomUUID().toString(),
+                name = pending.displayName,
+                category = category,
+                source = SampleSource.ImportedFile(uri = pending.filePath),
+                durationMs = pending.durationMs
+            )
+            importedSampleIndex.add(sample)
+
+            val newBlock = LoopBlock(
+                id = UUID.randomUUID().toString(),
+                sampleId = sample.id,
+                startGridUnit = pending.startGridUnit,
+                lengthGridUnits = pending.lengthGridUnits
+            )
+            val newTracks = project.tracks.map { t ->
+                if (t.slot == pending.trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
+            }
+            val newProject = project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis())
+
+            // Merge the new sample into the ONE combined library BEFORE
+            // rebuildAndPersist reads _uiState.value.samples (it resolves
+            // every block's sample id against that map) -- mirrors
+            // confirmPendingImport's merge step exactly.
+            _uiState.update { current ->
+                val mergedSamples = current.samples + (sample.id to sample)
+                current.copy(
+                    samples = mergedSamples,
+                    sampleList = mergedSamples.values.sortedBy { s -> s.name },
+                    message = "Recorded \"${sample.name}\""
+                )
+            }
+            rebuildAndPersist(newProject)
+        }
+    }
+
+    private fun recordingTimestampLabel(): String =
+        java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+
     override fun onCleared() {
         super.onCleared()
         playheadJob?.cancel()
@@ -451,6 +784,20 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         // here is an acceptable tradeoff since onCleared is not a hot path.
         runBlocking(Dispatchers.Default) {
             engineMutex.withLock {
+                if (AudioEngineBridge.isRecording()) {
+                    // Best-effort finalize (and discard) any in-flight
+                    // recording so the native input stream is cleanly
+                    // closed before stopEngine() tears down the whole
+                    // engine -- avoids leaking an open input stream across
+                    // a fast ViewModel recreation. The file itself is
+                    // throwaway; the user never confirmed a category for
+                    // it, so there's no pending-state cleanup to do.
+                    val recordingsDir = File(getApplication<Application>().filesDir, RECORDINGS_DIR_NAME)
+                    if (!recordingsDir.exists()) recordingsDir.mkdirs()
+                    val discardFile = File(recordingsDir, ".discard-${UUID.randomUUID()}.wav")
+                    AudioEngineBridge.stopRecording(discardFile.absolutePath)
+                    discardFile.delete()
+                }
                 AudioEngineBridge.stopEngine()
             }
         }
@@ -462,6 +809,15 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         private const val MAX_TRACKS = 8
         private const val DEFAULT_LOOP_REPEATS = 4
         private const val PLAYHEAD_POLL_INTERVAL_MS = 50L
+
+        /** Sibling of [com.beatwave.android.data.library.AudioImporter]'s
+         *  `imported_samples` directory -- see design item 10. */
+        private const val RECORDINGS_DIR_NAME = "recordings"
+
+        /** Below this, a stopped recording is treated as an accidental tap
+         *  and discarded rather than becoming a degenerate near-zero block
+         *  (design item 10). */
+        private const val MIN_RECORDING_DURATION_MS = 250L
 
         /** Serializes every coroutine that touches [AudioEngineBridge]'s
          *  engine-lifecycle or schedule-building calls -- shared across all

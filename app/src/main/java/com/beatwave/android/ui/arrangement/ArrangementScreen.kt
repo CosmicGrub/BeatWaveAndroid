@@ -1,5 +1,14 @@
 package com.beatwave.android.ui.arrangement
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -14,10 +23,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,11 +55,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.beatwave.android.audio.GridConstants
 import com.beatwave.android.data.model.LoopBlock
@@ -74,6 +87,34 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
     var showLibrary by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    // RECORD_AUDIO runtime permission flow (design item 9): requested
+    // lazily, only when the user first taps a track's Record button --
+    // never proactively at app launch. pendingRecordTrackSlot remembers
+    // WHICH track triggered the request so the launcher's callback (which
+    // only receives a Boolean) knows where to route the result.
+    var pendingRecordTrackSlot by remember { mutableStateOf<Int?>(null) }
+    val recordPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val trackSlot = pendingRecordTrackSlot
+        pendingRecordTrackSlot = null
+        if (trackSlot != null) {
+            if (granted) viewModel.startRecording(trackSlot) else viewModel.recordingPermissionDenied()
+        }
+    }
+    val onRecordTap: (Int) -> Unit = { trackSlot ->
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasPermission) {
+            viewModel.startRecording(trackSlot)
+        } else {
+            pendingRecordTrackSlot = trackSlot
+            recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     LaunchedEffect(uiState.message) {
         val message = uiState.message
@@ -90,6 +131,7 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
         bottomBar = {
             PlaybackControlBar(
                 isPlaying = uiState.isPlaying,
+                isRecording = uiState.recordingTrackSlot != null,
                 currentFrame = uiState.currentFrame,
                 sampleRate = uiState.sampleRate,
                 onTogglePlayPause = viewModel::togglePlayPause,
@@ -129,11 +171,18 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
                             track = track,
                             samples = uiState.samples,
                             isSelected = uiState.selectedTrackSlot == track.slot,
+                            isRecording = uiState.recordingTrackSlot == track.slot,
+                            isAnotherTrackRecording = uiState.recordingTrackSlot != null &&
+                                uiState.recordingTrackSlot != track.slot,
+                            recordedFrameCount = uiState.recordedFrameCount,
+                            sampleRate = uiState.sampleRate,
                             scrollState = scrollState,
                             timelineWidthDp = timelineWidthDp,
                             playheadGridUnitPosition = playheadGridUnitPosition,
                             onSelectTrack = { viewModel.selectTrack(track.slot) },
-                            onBlockTap = { blockId -> viewModel.openBlockEditor(track.slot, blockId) }
+                            onBlockTap = { blockId -> viewModel.openBlockEditor(track.slot, blockId) },
+                            onRecordTap = { onRecordTap(track.slot) },
+                            onStopRecordTap = { viewModel.stopRecording() }
                         )
                         HorizontalDivider()
                     }
@@ -153,12 +202,23 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
         )
     }
 
+    // Only one of these two pending-category prompts can be meaningfully
+    // shown at once (an import and a recording can't both be mid-flow from
+    // a single tap), but guard with else-if regardless so two AlertDialogs
+    // never stack in the unlikely event both are non-null simultaneously.
     val pendingImport = uiState.pendingImport
+    val pendingRecording = uiState.pendingRecording
     if (pendingImport != null) {
         CategoryPickerDialog(
             fileName = pendingImport.displayName,
             onDismiss = viewModel::cancelPendingImport,
             onConfirm = { category -> viewModel.confirmPendingImport(category) }
+        )
+    } else if (pendingRecording != null) {
+        CategoryPickerDialog(
+            fileName = pendingRecording.displayName,
+            onDismiss = viewModel::cancelPendingRecording,
+            onConfirm = { category -> viewModel.confirmPendingRecording(category) }
         )
     }
 
@@ -184,6 +244,7 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
 @Composable
 private fun PlaybackControlBar(
     isPlaying: Boolean,
+    isRecording: Boolean,
     currentFrame: Long,
     sampleRate: Int,
     onTogglePlayPause: () -> Unit,
@@ -195,7 +256,21 @@ private fun PlaybackControlBar(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Button(onClick = onTogglePlayPause, modifier = Modifier.testTag("play_pause_button")) {
+            // Disabled while a recording is in progress: pausing mid-recording
+            // would stop draining the still-open, still-capturing input
+            // stream (onAudioReady returns early on !mPlaying, before it ever
+            // reaches the recording-capture block), letting real hardware
+            // audio silently accumulate/overflow in Oboe's own buffer until
+            // playback resumes -- corrupting the take's alignment. Per the
+            // design's arm-and-play UX, only the per-track Stop-record
+            // affordance and the global Stop button (which finalizes an
+            // in-progress recording, see ArrangementViewModel.stopPlayback)
+            // may end a recording session.
+            Button(
+                onClick = onTogglePlayPause,
+                enabled = !isRecording,
+                modifier = Modifier.testTag("play_pause_button")
+            ) {
                 Text(if (isPlaying) "Pause" else "Play")
             }
             Spacer(Modifier.width(8.dp))
@@ -282,11 +357,17 @@ private fun TrackRow(
     track: Track,
     samples: Map<String, Sample>,
     isSelected: Boolean,
+    isRecording: Boolean,
+    isAnotherTrackRecording: Boolean,
+    recordedFrameCount: Long,
+    sampleRate: Int,
     scrollState: androidx.compose.foundation.ScrollState,
     timelineWidthDp: Dp,
     playheadGridUnitPosition: Float,
     onSelectTrack: () -> Unit,
-    onBlockTap: (String) -> Unit
+    onBlockTap: (String) -> Unit,
+    onRecordTap: () -> Unit,
+    onStopRecordTap: () -> Unit
 ) {
     Row(Modifier.fillMaxWidth().height(TRACK_ROW_HEIGHT)) {
         Column(
@@ -310,6 +391,16 @@ private fun TrackRow(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+            Spacer(Modifier.height(2.dp))
+            RecordAffordance(
+                trackSlot = track.slot,
+                isRecording = isRecording,
+                isDisabled = isAnotherTrackRecording,
+                recordedFrameCount = recordedFrameCount,
+                sampleRate = sampleRate,
+                onRecordTap = onRecordTap,
+                onStopRecordTap = onStopRecordTap
+            )
         }
 
         Box(
@@ -342,6 +433,68 @@ private fun TrackRow(
                 )
             }
         }
+    }
+}
+
+/**
+ * Per-track record affordance (design item 10): a "Record" label when
+ * idle, or a pulsing red dot + live elapsed time (driven by
+ * [ArrangementUiState.recordedFrameCount], polled the same way the
+ * timeline's playhead already polls [ArrangementUiState.currentFrame])
+ * while this track is the one currently recording. Stays visible but
+ * disabled (rather than hidden) while a DIFFERENT track is recording, so
+ * the user can see why -- the native engine supports only one recording at
+ * a time.
+ */
+@Composable
+private fun RecordAffordance(
+    trackSlot: Int,
+    isRecording: Boolean,
+    isDisabled: Boolean,
+    recordedFrameCount: Long,
+    sampleRate: Int,
+    onRecordTap: () -> Unit,
+    onStopRecordTap: () -> Unit
+) {
+    if (isRecording) {
+        val infiniteTransition = rememberInfiniteTransition(label = "record_pulse")
+        val dotAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(600),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "record_pulse_alpha"
+        )
+        Row(
+            Modifier
+                .testTag("stop_record_button_$trackSlot")
+                .clickable { onStopRecordTap() },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = dotAlpha))
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = formatPosition(recordedFrameCount, sampleRate),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+    } else {
+        Text(
+            text = "Record",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isDisabled) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error,
+            modifier = Modifier
+                .testTag("record_button_$trackSlot")
+                .clickable(enabled = !isDisabled) { onRecordTap() }
+        )
     }
 }
 
