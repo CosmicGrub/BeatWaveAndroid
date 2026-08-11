@@ -42,6 +42,17 @@ struct SampleBuffer {
  */
 class SampleBank {
 public:
+    /**
+     * assetPath is dispatched by shape: a leading '/' means an absolute
+     * filesystem path (e.g. an imported sample copied into app-private
+     * storage under filesDir -- decoded via WavDecoder::decodeFile and
+     * never touching assetManager), anything else is treated as an
+     * AAssetManager-relative bundled asset path (decoded via
+     * WavDecoder::decodeAsset, e.g. "loops/kick_basic_01.wav"). Either way
+     * the cache below is keyed by the raw path string as given -- the two
+     * shapes can never collide since bundled asset paths never start with
+     * '/'.
+     */
     std::shared_ptr<const SampleBuffer> getOrLoad(
             AAssetManager *assetManager,
             const std::string &assetPath,

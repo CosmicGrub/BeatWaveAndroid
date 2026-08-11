@@ -148,7 +148,17 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
             selectedTrackSlot = uiState.selectedTrackSlot,
             onDismiss = { showLibrary = false },
             onPreview = viewModel::previewSample,
-            onAdd = { sample -> viewModel.addLoopToSelectedTrack(sample) }
+            onAdd = { sample -> viewModel.addLoopToSelectedTrack(sample) },
+            onImport = { uri -> viewModel.importAudioFromUri(uri) }
+        )
+    }
+
+    val pendingImport = uiState.pendingImport
+    if (pendingImport != null) {
+        CategoryPickerDialog(
+            fileName = pendingImport.displayName,
+            onDismiss = viewModel::cancelPendingImport,
+            onConfirm = { category -> viewModel.confirmPendingImport(category) }
         )
     }
 

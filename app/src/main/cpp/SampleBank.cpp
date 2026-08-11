@@ -4,6 +4,18 @@
 
 namespace beatwave {
 
+namespace {
+
+// Path-shape convention shared with the Kotlin-side importer: a leading '/'
+// means an absolute filesystem path (imported sample under filesDir);
+// anything else is an AAssetManager-relative bundled asset path. Bundled
+// asset paths never start with '/', so the two shapes can never collide.
+bool isFilesystemPath(const std::string &path) {
+    return !path.empty() && path.front() == '/';
+}
+
+} // namespace
+
 std::shared_ptr<const SampleBuffer> SampleBank::getOrLoad(
         AAssetManager *assetManager, const std::string &assetPath, int32_t targetSampleRateHz) {
     std::lock_guard<std::mutex> lock(mMutex);
@@ -17,7 +29,10 @@ std::shared_ptr<const SampleBuffer> SampleBank::getOrLoad(
     }
 
     DecodedPcm decoded;
-    if (!WavDecoder::decodeAsset(assetManager, assetPath, &decoded)) {
+    const bool decodeOk = isFilesystemPath(assetPath)
+            ? WavDecoder::decodeFile(assetPath, &decoded)
+            : WavDecoder::decodeAsset(assetManager, assetPath, &decoded);
+    if (!decodeOk) {
         return nullptr;
     }
 

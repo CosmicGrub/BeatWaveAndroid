@@ -36,13 +36,23 @@ class ProjectPlaybackController(private val context: Context) {
     /**
      * Builds and atomically publishes a new playback score for [project],
      * resolving each loop block's [com.beatwave.android.data.model.LoopBlock.sampleId]
-     * to a bundled asset path via [samples] (typically the id->Sample map
-     * loaded by com.beatwave.android.data.library.AssetLoopLibrary).
+     * to a sample path via [samples] (typically the id->Sample map merged
+     * from com.beatwave.android.data.library.AssetLoopLibrary and, since
+     * Phase 4, com.beatwave.android.data.library.ImportedSampleIndex).
      *
-     * A loop block referencing an unknown sample id, or a sample whose
-     * source isn't [SampleSource.BundledAsset] (e.g. an imported file --
-     * wired up in Phase 4), is silently skipped rather than failing the
-     * whole load; every other block still loads and plays normally.
+     * The path passed to [AudioEngineBridge.addLoopBlock] is the sample's
+     * [SampleSource.BundledAsset.assetPath] (AAssetManager-relative, never
+     * starts with '/') or [SampleSource.ImportedFile.uri] (an absolute
+     * filesystem path under app-private storage, always starts with '/' on
+     * Android -- despite the "uri" field name, Phase 4 stores an absolute
+     * filesystem path there, not a content URI, per its own design). Either
+     * way SampleBank::getOrLoad on the native side dispatches purely by
+     * checking for a leading '/' -- see SampleBank.cpp -- so no further
+     * marker is needed here.
+     *
+     * A loop block referencing an unknown sample id is silently skipped
+     * rather than failing the whole load; every other block still loads and
+     * plays normally.
      */
     fun loadProject(project: Project, samples: Map<String, Sample>) {
         AudioEngineBridge.beginProject(project.bpm)
@@ -50,7 +60,10 @@ class ProjectPlaybackController(private val context: Context) {
             AudioEngineBridge.addTrack(track.slot)
             for (block in track.loopBlocks) {
                 val sample = samples[block.sampleId] ?: continue
-                val assetPath = (sample.source as? SampleSource.BundledAsset)?.assetPath ?: continue
+                val assetPath = when (val source = sample.source) {
+                    is SampleSource.BundledAsset -> source.assetPath
+                    is SampleSource.ImportedFile -> source.uri
+                }
                 AudioEngineBridge.addLoopBlock(
                     track.slot,
                     assetPath,

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 
 namespace beatwave {
 
@@ -45,30 +46,14 @@ float normalizeSample(int32_t raw, int bytesPerSample) {
     }
 }
 
-} // namespace
-
-bool WavDecoder::decodeAsset(AAssetManager *assetManager, const std::string &assetPath, DecodedPcm *out) {
-    if (assetManager == nullptr || out == nullptr) {
-        return false;
-    }
-
-    AAsset *asset = AAssetManager_open(assetManager, assetPath.c_str(), AASSET_MODE_BUFFER);
-    if (asset == nullptr) {
-        return false;
-    }
-
-    const off_t length = AAsset_getLength(asset);
-    std::vector<uint8_t> bytes(static_cast<size_t>(length > 0 ? length : 0));
-    off_t totalRead = 0;
-    while (totalRead < length) {
-        int n = AAsset_read(asset, bytes.data() + totalRead, static_cast<size_t>(length - totalRead));
-        if (n <= 0) break;
-        totalRead += n;
-    }
-    AAsset_close(asset);
-
-    if (totalRead != length || length < 44) {
-        return false; // too short to be a valid WAV, or a truncated read
+// Parses a fully-buffered RIFF/WAVE file already sitting in memory, common
+// to both the AAssetManager-backed and plain-filesystem-backed decode paths
+// below so the two loaders are guaranteed to produce identical results for
+// identical bytes. Returns false (leaving *out untouched) on any parse
+// failure.
+bool decodeBytesToPcm(const std::vector<uint8_t> &bytes, DecodedPcm *out) {
+    if (bytes.size() < 44) {
+        return false; // too short to be a valid WAV
     }
 
     const uint8_t *data = bytes.data();
@@ -147,6 +132,63 @@ bool WavDecoder::decodeAsset(AAssetManager *assetManager, const std::string &ass
     }
 
     return true;
+}
+
+} // namespace
+
+bool WavDecoder::decodeAsset(AAssetManager *assetManager, const std::string &assetPath, DecodedPcm *out) {
+    if (assetManager == nullptr || out == nullptr) {
+        return false;
+    }
+
+    AAsset *asset = AAssetManager_open(assetManager, assetPath.c_str(), AASSET_MODE_BUFFER);
+    if (asset == nullptr) {
+        return false;
+    }
+
+    const off_t length = AAsset_getLength(asset);
+    std::vector<uint8_t> bytes(static_cast<size_t>(length > 0 ? length : 0));
+    off_t totalRead = 0;
+    while (totalRead < length) {
+        int n = AAsset_read(asset, bytes.data() + totalRead, static_cast<size_t>(length - totalRead));
+        if (n <= 0) break;
+        totalRead += n;
+    }
+    AAsset_close(asset);
+
+    if (totalRead != length) {
+        return false; // truncated read
+    }
+
+    return decodeBytesToPcm(bytes, out);
+}
+
+bool WavDecoder::decodeFile(const std::string &filePath, DecodedPcm *out) {
+    if (out == nullptr) {
+        return false;
+    }
+
+    // Plain filesystem read (e.g. an imported sample copied into app-private
+    // storage under filesDir) -- AAssetManager cannot see these, they are
+    // not bundled inside the APK's assets/ folder. Off-audio-thread only,
+    // same as decodeAsset above.
+    std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    const std::streamoff length = file.tellg();
+    if (length <= 0) {
+        return false;
+    }
+    file.seekg(0, std::ios::beg);
+
+    std::vector<uint8_t> bytes(static_cast<size_t>(length));
+    if (!file.read(reinterpret_cast<char *>(bytes.data()), length)) {
+        return false; // truncated/failed read
+    }
+
+    return decodeBytesToPcm(bytes, out);
 }
 
 std::vector<float> resampleLinear(

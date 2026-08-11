@@ -1,5 +1,8 @@
 package com.beatwave.android.ui.arrangement
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
@@ -22,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -44,6 +48,13 @@ import com.beatwave.android.data.model.SampleCategory
  * via the ViewModel. Each card has an independent one-shot "Preview" action
  * and an "Add" action that places the loop on whichever track is currently
  * selected on the timeline (see [ArrangementViewModel.addLoopToSelectedTrack]).
+ *
+ * Phase 4 adds an "Import from device" trigger: launches the system
+ * [ActivityResultContracts.OpenDocument] picker restricted to audio MIME
+ * types, and forwards the picked [Uri] to [onImport] (see [ArrangementViewModel.importAudioFromUri])
+ * to drive the decode/category-prompt/persist pipeline. No persistable URI
+ * permission is taken -- the file is decoded and copied immediately, so no
+ * long-term access to the original Uri is needed afterward.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,10 +63,16 @@ fun LoopLibraryBottomSheet(
     selectedTrackSlot: Int?,
     onDismiss: () -> Unit,
     onPreview: (Sample) -> Unit,
-    onAdd: (Sample) -> Unit
+    onAdd: (Sample) -> Unit,
+    onImport: (Uri) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedCategory by remember { mutableStateOf<SampleCategory?>(null) }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            onImport(uri)
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -65,6 +82,13 @@ fun LoopLibraryBottomSheet(
                 TextButton(onClick = onDismiss, modifier = Modifier.testTag("loop_library_close_button")) {
                     Text("Close")
                 }
+            }
+            Spacer(Modifier.height(4.dp))
+            OutlinedButton(
+                onClick = { importLauncher.launch(arrayOf("audio/*")) },
+                modifier = Modifier.testTag("import_from_device_button")
+            ) {
+                Text("Import from device")
             }
             Spacer(Modifier.height(4.dp))
             Text(
@@ -86,14 +110,16 @@ fun LoopLibraryBottomSheet(
                 FilterChip(
                     selected = selectedCategory == null,
                     onClick = { selectedCategory = null },
-                    label = { Text("All") }
+                    label = { Text("All") },
+                    modifier = Modifier.testTag("category_filter_ALL")
                 )
                 Spacer(Modifier.width(8.dp))
                 for (category in SampleCategory.entries) {
                     FilterChip(
                         selected = selectedCategory == category,
                         onClick = { selectedCategory = category },
-                        label = { Text(category.name) }
+                        label = { Text(category.name) },
+                        modifier = Modifier.testTag("category_filter_${category.name}")
                     )
                     Spacer(Modifier.width(8.dp))
                 }

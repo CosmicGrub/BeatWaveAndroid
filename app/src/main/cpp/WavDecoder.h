@@ -30,6 +30,13 @@ public:
     /** Reads assetPath via assetManager and fully decodes it to float32.
      *  Returns false (leaving *out untouched) on any parse/read failure. */
     static bool decodeAsset(AAssetManager *assetManager, const std::string &assetPath, DecodedPcm *out);
+
+    /** Reads filePath directly from the filesystem (an absolute path -- e.g.
+     *  an imported sample copied into app-private storage under filesDir)
+     *  and fully decodes it to float32, producing the exact same DecodedPcm
+     *  shape as decodeAsset. Returns false (leaving *out untouched) on any
+     *  open/read/parse failure. Off-audio-thread only, same as decodeAsset. */
+    static bool decodeFile(const std::string &filePath, DecodedPcm *out);
 };
 
 /**

@@ -2,18 +2,23 @@ package com.beatwave.android.ui.arrangement
 
 import android.app.Application
 import android.media.MediaPlayer
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.beatwave.android.AudioEngineBridge
 import com.beatwave.android.audio.GridConstants
 import com.beatwave.android.audio.ProjectPlaybackController
 import com.beatwave.android.data.library.AssetLoopLibrary
+import com.beatwave.android.data.library.AudioImporter
+import com.beatwave.android.data.library.ImportedSampleIndex
 import com.beatwave.android.data.model.LoopBlock
 import com.beatwave.android.data.model.Project
 import com.beatwave.android.data.model.Sample
+import com.beatwave.android.data.model.SampleCategory
 import com.beatwave.android.data.model.SampleSource
 import com.beatwave.android.data.model.Track
 import com.beatwave.android.data.storage.ProjectRepository
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,8 +38,26 @@ import kotlin.math.ceil
 data class TrackBlockRef(val trackSlot: Int, val blockId: String)
 
 /**
+ * A successfully-decoded import (Phase 4 design item 3/4) waiting on the
+ * user's category choice before [ArrangementViewModel.confirmPendingImport]
+ * finalizes it into a [Sample]. [filePath] is the absolute filesystem path
+ * of the WAV file [AudioImporter] already wrote into app-private storage.
+ */
+data class PendingImportSample(
+    val filePath: String,
+    val displayName: String,
+    val durationMs: Long
+)
+
+/**
  * All UI-observable state for [ArrangementScreen] and its children. [project]
  * is null only during the brief initial load in [ArrangementViewModel.init].
+ *
+ * [samples]/[sampleList] hold the ONE combined loop library shown in
+ * [LoopLibraryBottomSheet] -- bundled samples from [AssetLoopLibrary] merged
+ * with imported samples from [ImportedSampleIndex] (Phase 4 design item 6).
+ * An imported sample is indistinguishable from a bundled one anywhere this
+ * state flows: same map, same list, same placement path.
  */
 data class ArrangementUiState(
     val project: Project? = null,
@@ -45,6 +68,7 @@ data class ArrangementUiState(
     val currentFrame: Long = 0L,
     val sampleRate: Int = 0,
     val editingBlock: TrackBlockRef? = null,
+    val pendingImport: PendingImportSample? = null,
     val message: String? = null
 )
 
@@ -96,6 +120,12 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     private val assetLoopLibrary = AssetLoopLibrary(application)
     private val playbackController = ProjectPlaybackController(application)
 
+    // Phase 4: SAF import pipeline collaborators. Neither touches the
+    // native engine directly -- decode/persistence only -- so neither needs
+    // engineMutex; see importAudioFromUri/confirmPendingImport below.
+    private val audioImporter = AudioImporter(application)
+    private val importedSampleIndex = ImportedSampleIndex.forContext(application)
+
     private val _uiState = MutableStateFlow(ArrangementUiState())
     val uiState: StateFlow<ArrangementUiState> = _uiState.asStateFlow()
 
@@ -105,7 +135,14 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     init {
         viewModelScope.launch(Dispatchers.Default) {
             val loadedProject = repository.load(PROJECT_ID)
-            val samples = assetLoopLibrary.loadSamples().associateBy { it.id }
+            // Merge bundled + imported samples into the ONE combined library
+            // (design item 6) -- background-dispatched same as the rest of
+            // this init block. importedSampleIndex.load() is plain JSON file
+            // I/O, not a native engine call, so it does NOT need engineMutex
+            // (that guards only AudioEngineBridge calls -- see the class doc).
+            val bundledSamples = assetLoopLibrary.loadSamples()
+            val importedSamples = importedSampleIndex.load()
+            val samples = (bundledSamples + importedSamples).associateBy { it.id }
             val project = loadedProject ?: Project(
                 id = PROJECT_ID,
                 name = "My Project",
@@ -286,7 +323,6 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     // --- One-shot loop preview (independent of the arrangement engine) ---
 
     fun previewSample(sample: Sample) {
-        val bundled = sample.source as? SampleSource.BundledAsset ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 previewPlayer?.apply {
@@ -295,8 +331,18 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 }
                 previewPlayer = null
                 val player = MediaPlayer()
-                getApplication<Application>().assets.openFd(bundled.assetPath).use { afd ->
-                    player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                when (val source = sample.source) {
+                    is SampleSource.BundledAsset -> {
+                        getApplication<Application>().assets.openFd(source.assetPath).use { afd ->
+                            player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        }
+                    }
+                    is SampleSource.ImportedFile -> {
+                        // Phase 4: an absolute filesystem path (see the
+                        // ImportedFile doc comment), which MediaPlayer can
+                        // open directly via the String overload.
+                        player.setDataSource(source.uri)
+                    }
                 }
                 player.setOnCompletionListener { mp -> mp.release() }
                 player.prepare()
@@ -304,6 +350,90 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 previewPlayer = player
             } catch (t: Throwable) {
                 // Preview is a non-critical convenience; swallow failures.
+            }
+        }
+    }
+
+    // --- SAF import pipeline (Phase 4 design items 3-6) ---
+    //
+    // Neither importAudioFromUri nor confirmPendingImport touches
+    // AudioEngineBridge -- decode is pure Kotlin (AudioImporter), and
+    // persistence is a plain JSON file write (ImportedSampleIndex) -- so
+    // neither needs engineMutex; that Mutex guards only the native engine's
+    // schedule-building/lifecycle calls (see the class doc's SERIALIZATION
+    // note). The merged sample only reaches the engine later, through the
+    // exact same addLoopToSelectedTrack -> rebuildAndPersist path every
+    // bundled sample already uses -- no special-casing needed there.
+
+    /** Kicks off the decode pipeline for a SAF-picked [uri] (see
+     *  [LoopLibraryBottomSheet]'s "Import from device" button). Runs off the
+     *  main thread per [AudioImporter]'s contract. On success, stashes the
+     *  decoded file as [ArrangementUiState.pendingImport] so the UI can show
+     *  [CategoryPickerDialog]; on failure, surfaces the error via the
+     *  existing [ArrangementUiState.message] Snackbar path instead of
+     *  crashing. */
+    fun importAudioFromUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            audioImporter.import(uri).fold(
+                onSuccess = { imported ->
+                    _uiState.update {
+                        it.copy(
+                            pendingImport = PendingImportSample(
+                                filePath = imported.file.absolutePath,
+                                displayName = imported.displayName,
+                                durationMs = imported.durationMs
+                            )
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update { it.copy(message = error.message ?: "Failed to import audio file.") }
+                }
+            )
+        }
+    }
+
+    /** Dismisses [ArrangementUiState.pendingImport] without adding it to the
+     *  library (user cancelled the category prompt). The already-decoded WAV
+     *  file is no longer referenced by anything once dismissed, so it is
+     *  deleted off the main thread to avoid leaving an orphaned file under
+     *  `filesDir/imported_samples/` on every cancel. Best-effort: a failed
+     *  delete here isn't user-visible and isn't worth surfacing. */
+    fun cancelPendingImport() {
+        val pending = _uiState.value.pendingImport
+        _uiState.update { it.copy(pendingImport = null) }
+        if (pending != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                File(pending.filePath).delete()
+            }
+        }
+    }
+
+    /** Finalizes [ArrangementUiState.pendingImport] into a [Sample] tagged
+     *  with the user's chosen [category], persists it to
+     *  [ImportedSampleIndex], and merges it into the SAME [samples]/
+     *  [sampleList] state bundled loops already flow through -- this is what
+     *  makes it show up, be tappable, and be placeable identically to a
+     *  bundled loop (design item 6). */
+    fun confirmPendingImport(category: SampleCategory) {
+        val pending = _uiState.value.pendingImport ?: return
+        _uiState.update { it.copy(pendingImport = null) }
+        viewModelScope.launch(Dispatchers.Default) {
+            val sample = Sample(
+                id = UUID.randomUUID().toString(),
+                name = pending.displayName,
+                category = category,
+                source = SampleSource.ImportedFile(uri = pending.filePath),
+                durationMs = pending.durationMs
+            )
+            importedSampleIndex.add(sample)
+            _uiState.update { current ->
+                val mergedSamples = current.samples + (sample.id to sample)
+                current.copy(
+                    samples = mergedSamples,
+                    sampleList = mergedSamples.values.sortedBy { s -> s.name },
+                    message = "Imported \"${sample.name}\""
+                )
             }
         }
     }
