@@ -3,25 +3,21 @@ package com.beatwave.android
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.beatwave.android.ui.arrangement.ArrangementScreen
 
 /**
- * Phase 0 entry point.
+ * Phase 3 entry point: hosts the real arrangement UI -- horizontal timeline
+ * with the fixed 8 tracks, bottom-sheet loop library, per-block editor, and
+ * playback controls -- replacing Phase 0's placeholder status screen.
  *
- * This screen only exists to prove the app installs, launches, and that the
- * native audio module (see src/main/cpp) loads and opens a stream without
- * crashing. The real arrangement UI (timeline + bottom-sheet loop library)
- * is built in Phase 3.
+ * Native audio engine lifecycle (startEngine/nativeInit/loadProject on init,
+ * stopEngine on teardown) is owned by
+ * [com.beatwave.android.ui.arrangement.ArrangementViewModel], scoped to this
+ * activity via the default `viewModel()` factory.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,31 +25,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    Phase0StatusScreen()
+                    ArrangementScreen()
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun Phase0StatusScreen() {
-    val engineStatus = remember { mutableStateOf("Starting native audio engine…") }
-
-    LaunchedEffect(Unit) {
-        engineStatus.value = try {
-            val opened = AudioEngineBridge.startEngine()
-            if (opened) {
-                "Native audio engine: stream opened OK (silence passthrough)"
-            } else {
-                "Native audio engine: failed to open stream"
-            }
-        } catch (t: Throwable) {
-            "Native audio engine: not loaded (${t.message})"
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text = "BeatWave — Phase 0 scaffold\n\n${engineStatus.value}")
     }
 }
