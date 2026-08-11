@@ -23,8 +23,14 @@ iterations but explicitly out of scope now.
 - **Per-loop editing**: trim, volume, basic pitch adjustment — matching
   BeatWave's per-block controls.
 - **Playback**: play/pause/scrub the full arrangement.
-- **Export/Share**: render the arrangement to an audio file and share it via
-  Android's native share sheet (any app — WhatsApp, Instagram, etc.).
+- **Live mic recording onto a track**: record audio input (voice/instrument)
+  in real time onto a track while the rest of the arrangement plays back,
+  producing a new `Sample` that behaves like any other loop block (can be
+  trimmed, moved, layered). Requires `RECORD_AUDIO` permission and a
+  monitoring/latency-aware input path in the Oboe engine so the recorded
+  take stays aligned to the playing arrangement.
+- **Export/Share**: render the full arrangement to an audio file and share
+  it via Android's native share sheet (any app — WhatsApp, Instagram, etc.).
 
 ## Android-Native Hooks (baked into v1)
 
@@ -38,11 +44,13 @@ iterations but explicitly out of scope now.
 
 - **Language/UI**: Kotlin + Jetpack Compose.
 - **Audio engine**: Google Oboe (C++ via JNI/NDK) for sample-accurate,
-  low-latency multi-track loop playback and mixing. Chosen over
-  MediaPlayer/ExoPlayer or SoundPool because those introduce drift or
-  clicking at loop boundaries when multiple tracks must stay phase-locked
-  over time — unacceptable for a sequencer where tracks are meant to layer
-  seamlessly.
+  low-latency multi-track loop playback and mixing, and for live input
+  capture. Chosen over MediaPlayer/ExoPlayer or SoundPool because those
+  introduce drift or clicking at loop boundaries when multiple tracks must
+  stay phase-locked over time — unacceptable for a sequencer where tracks
+  are meant to layer seamlessly. Oboe's full-duplex (simultaneous
+  input+output) support is also what makes real-time mic recording against
+  a playing arrangement feasible with low enough latency to stay in sync.
 - **Storage**: fully local, no accounts, no backend.
   - Projects (track/loop arrangement data + references to sample files)
     saved in app storage as project files.
@@ -70,6 +78,16 @@ iterations but explicitly out of scope now.
   patterns.
 - Track categories (Drums/Bass/Synth/Vocal) are color-coded and consistent
   between the timeline and the loop library for quick visual matching.
+- Each track has a **record button** in addition to its mute/select
+  controls; tapping it arms the track, starts arrangement playback (if not
+  already playing), and records mic input into a new loop block on that
+  track until stopped.
+- Overall screen structure (timeline/grid of tracks as the home view, a
+  slide-up library/sound browser, per-track production controls, and a
+  record action) is modeled directly on BeatWave's own layout — grid-based
+  arrangement view, sound library access, and a dedicated recording
+  interface — adapted to Android conventions (bottom sheet instead of
+  modal, back-button navigation, Material controls) rather than reinvented.
 
 ## Out of Scope for v1 (explicitly deferred)
 
@@ -84,7 +102,8 @@ iterations but explicitly out of scope now.
 
 - Unit tests for data model and arrangement logic (Kotlin).
 - Instrumented tests for Oboe engine sync accuracy — loop boundaries must
-  stay phase-locked over extended playback.
+  stay phase-locked over extended playback, and mic recordings must land
+  aligned to the grid relative to concurrently playing tracks.
 - Manual verification pass for MediaSession controls (lock screen,
   notification, headset buttons) and the share-sheet import/export
   round-trip.
