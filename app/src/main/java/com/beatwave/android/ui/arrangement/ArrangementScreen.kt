@@ -2,6 +2,7 @@ package com.beatwave.android.ui.arrangement
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -113,6 +114,37 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
         } else {
             pendingRecordTrackSlot = trackSlot
             recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // POST_NOTIFICATIONS runtime permission flow (Phase 6 design item 4):
+    // requested lazily, only the first time playback actually starts --
+    // never proactively at app launch -- mirroring the RECORD_AUDIO pattern
+    // above exactly. Denial is handled gracefully: the foreground service
+    // and playback itself are unaffected (see BeatWavePlaybackService), only
+    // the lock-screen/notification surface won't be visible, and the user is
+    // told this once via the existing Snackbar-style message mechanism
+    // rather than being blocked or re-prompted on every subsequent Play tap.
+    var hasRequestedNotificationPermission by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            viewModel.notificationPermissionDenied()
+        }
+    }
+    LaunchedEffect(uiState.isPlaying) {
+        if (uiState.isPlaying &&
+            !hasRequestedNotificationPermission &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
+            hasRequestedNotificationPermission = true
+            val hasPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 
@@ -374,22 +406,39 @@ private fun TrackRow(
             Modifier
                 .width(HEADER_WIDTH)
                 .fillMaxHeight()
-                .testTag("track_header_${track.slot}")
                 .background(
                     if (isSelected) MaterialTheme.colorScheme.primaryContainer
                     else MaterialTheme.colorScheme.surfaceVariant
                 )
-                .clickable { onSelectTrack() }
                 .padding(8.dp),
             verticalArrangement = Arrangement.Center
         ) {
-            Text("Track ${track.slot}", style = MaterialTheme.typography.labelMedium)
-            if (isSelected) {
-                Text(
-                    "Selected",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
+            // Deliberately scoped to JUST the label text (not the whole
+            // header column) -- this used to wrap RecordAffordance too,
+            // which meant a tap anywhere in this Column's bounds could land
+            // on the nested Record hit-target instead of selecting the
+            // track. TRACK_ROW_HEIGHT (72dp) centers this whole stack
+            // vertically, so the geometric center of a full-height clickable
+            // column sat right on/near the Record label below -- a real
+            // on-device instrumented test caught this by driving an actual
+            // tap at that computed center and landing on the Record button
+            // (started an unintended recording) instead of selecting Track
+            // 1. Splitting the clickable+testTag to only this label sub-
+            // column removes the overlap for both real taps and tests,
+            // without changing the visual layout at all.
+            Column(
+                Modifier
+                    .testTag("track_header_${track.slot}")
+                    .clickable { onSelectTrack() }
+            ) {
+                Text("Track ${track.slot}", style = MaterialTheme.typography.labelMedium)
+                if (isSelected) {
+                    Text(
+                        "Selected",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
             Spacer(Modifier.height(2.dp))
             RecordAffordance(

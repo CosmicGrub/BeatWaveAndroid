@@ -5,9 +5,9 @@ import android.media.MediaPlayer
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.beatwave.android.AudioEngineBridge
+import com.beatwave.android.BeatWaveApplication
 import com.beatwave.android.audio.GridConstants
-import com.beatwave.android.audio.ProjectPlaybackController
+import com.beatwave.android.audio.PlaybackEngine
 import com.beatwave.android.data.library.AssetLoopLibrary
 import com.beatwave.android.data.library.AudioImporter
 import com.beatwave.android.data.library.ImportedSampleIndex
@@ -22,16 +22,14 @@ import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlin.math.ceil
 
 /** Identifies a specific loop block currently open in the editor sheet. */
@@ -77,6 +75,11 @@ data class PendingRecordingSample(
  * with imported samples from [ImportedSampleIndex] (Phase 4 design item 6).
  * An imported sample is indistinguishable from a bundled one anywhere this
  * state flows: same map, same list, same placement path.
+ *
+ * [isPlaying]/[currentFrame]/[sampleRate]/[recordedFrameCount] mirror
+ * [PlaybackEngine.state] (Phase 6) -- this class no longer owns the native
+ * transport directly, it just reflects the app-wide [PlaybackEngine]
+ * singleton's state into UI-observable form (see the class doc below).
  */
 data class ArrangementUiState(
     val project: Project? = null,
@@ -103,34 +106,34 @@ data class ArrangementUiState(
 )
 
 /**
- * Owns the current [Project] arrangement, mediates between the Compose UI,
- * [ProjectRepository] (persistence), [AssetLoopLibrary] (bundled loop
- * metadata), and [ProjectPlaybackController]/[AudioEngineBridge] (native
- * playback engine), per the Phase 3 design.
+ * Owns the current [Project] arrangement and mediates between the Compose
+ * UI, [ProjectRepository] (persistence), [AssetLoopLibrary] (bundled loop
+ * metadata), and -- as of Phase 6 -- the app-wide [PlaybackEngine] singleton
+ * (native playback engine transport/recording), per the Phase 6 design.
  *
- * THREADING: every call that rebuilds/commits the native playback schedule
- * (initial load, add/edit/delete of a loop block) is dispatched via
- * `viewModelScope.launch(Dispatchers.Default)`, per AudioEngineBridge's
- * threading contract -- those calls do asset I/O, allocation, and sample
- * decode/resample and must never run on the main thread. Transport controls
- * (play/pause/stop/seek/getCurrentFrame/getSampleRate) are cheap atomic ops
- * and are called directly from UI event handlers.
+ * PHASE 6 REFACTOR: through Phase 5, this class owned the native engine's
+ * lifecycle (nativeInit/startEngine/stopEngine), the engineMutex
+ * serializing every native-touching call, transport (play/pause/stop/seek),
+ * the playhead-polling coroutine, and recording start/stop directly. All of
+ * that moved OUT of this class and INTO [PlaybackEngine] (an application-
+ * scoped singleton exposed via [BeatWaveApplication.playbackEngine]) so
+ * [com.beatwave.android.audio.BeatWavePlaybackService]'s MediaSession can
+ * drive the exact same engine instance this ViewModel drives -- lock-screen/
+ * notification controls and in-app controls are now two views onto one
+ * playback session. This class now DELEGATES every engine-touching
+ * operation to [playbackEngine] and combines its [PlaybackEngine.state]
+ * StateFlow into [uiState], rather than owning the engine directly. Every
+ * behavior a Phase 3-5 instrumented test depends on (play/pause/stop/seek/
+ * record semantics, transport values read back via
+ * [com.beatwave.android.AudioEngineBridge]) is preserved exactly -- only
+ * *where* the engine lifecycle/mutex/polling loop lives has changed.
  *
- * SERIALIZATION: the native engine's schedule-building calls
- * (nativeInit/beginProject/addTrack/addLoopBlock/commitProject) stage into a
- * single unsynchronized ScoreBuilder that is only safe for one background
- * caller at a time -- it is NOT safe for two of those sequences to run
- * concurrently. Because `startEngine`/`stopEngine` also touch that same
- * singleton native engine, [engineMutex] is a *companion-object* (process-
- * wide, shared across every ArrangementViewModel instance) Mutex that every
- * background coroutine touching the engine -- [init], [rebuildAndPersist],
- * and [onCleared]'s teardown -- must hold for the duration of its native
- * calls. This guarantees at most one beginProject/.../commitProject (or
- * startEngine/stopEngine) sequence is ever in flight, even across rapid
- * back-to-back UI actions or a fast ViewModel recreation. Coroutine
- * cancellation is deliberately NOT used to abort an in-flight rebuild --
- * the JNI calls are synchronous/blocking and can't be interrupted
- * mid-call -- so this queues via the mutex instead of cancel-and-relaunch.
+ * SCHEDULE-BUILDING STILL LIVES HERE: [rebuildAndPersist] (loop block add/
+ * edit/delete) still calls [PlaybackEngine.loadProject] -- that native call
+ * is engineMutex-guarded *inside* PlaybackEngine now, preserving the same
+ * "at most one beginProject/.../commitProject (or startEngine/stopEngine)
+ * sequence in flight" guarantee the Phase 3 doc originally described,
+ * without this class needing direct access to the mutex.
  *
  * PLACEMENT INTERACTION (documented per the implementation plan's request):
  * the user first taps a track row to select it (highlighted), then opens the
@@ -148,28 +151,60 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
 
     private val repository = ProjectRepository.forContext(application)
     private val assetLoopLibrary = AssetLoopLibrary(application)
-    private val playbackController = ProjectPlaybackController(application)
+
+    /** The app-wide singleton every engine-touching call below delegates
+     *  to -- see the class doc's PHASE 6 REFACTOR note. */
+    private val playbackEngine: PlaybackEngine =
+        (application as BeatWaveApplication).playbackEngine
 
     // Phase 4: SAF import pipeline collaborators. Neither touches the
     // native engine directly -- decode/persistence only -- so neither needs
-    // engineMutex; see importAudioFromUri/confirmPendingImport below.
+    // to go through playbackEngine; see importAudioFromUri/confirmPendingImport below.
     private val audioImporter = AudioImporter(application)
     private val importedSampleIndex = ImportedSampleIndex.forContext(application)
 
     private val _uiState = MutableStateFlow(ArrangementUiState())
     val uiState: StateFlow<ArrangementUiState> = _uiState.asStateFlow()
 
-    private var playheadJob: Job? = null
     private var previewPlayer: MediaPlayer? = null
 
     init {
+        // Reflect PlaybackEngine's transport/recording state into uiState
+        // for the lifetime of this ViewModel -- this is what replaces the
+        // old direct playheadJob-driven _uiState.update calls (Phase 3-5).
+        viewModelScope.launch {
+            playbackEngine.state.collect { engineState ->
+                _uiState.update {
+                    it.copy(
+                        isPlaying = engineState.isPlaying,
+                        currentFrame = engineState.currentFrame,
+                        sampleRate = engineState.sampleRate,
+                        recordedFrameCount = engineState.recordedFrameCount
+                    )
+                }
+            }
+        }
+        // Mandate 3 (Phase 5): auto-finalize a recording that hit the
+        // native buffer cap, exactly as the old in-ViewModel polling loop
+        // did -- reacts only on the rising edge (distinctUntilChanged) so a
+        // burst of state emissions while finalize is in flight doesn't
+        // re-trigger the message/finalize repeatedly.
+        viewModelScope.launch {
+            playbackEngine.state.map { it.recordingCapReached }.distinctUntilChanged().collect { capReached ->
+                if (capReached && _uiState.value.recordingTrackSlot != null) {
+                    _uiState.update { it.copy(message = "Recording reached the maximum length and was stopped automatically.") }
+                    stopRecording()
+                }
+            }
+        }
+
         viewModelScope.launch(Dispatchers.Default) {
             val loadedProject = repository.load(PROJECT_ID)
             // Merge bundled + imported samples into the ONE combined library
             // (design item 6) -- background-dispatched same as the rest of
             // this init block. importedSampleIndex.load() is plain JSON file
-            // I/O, not a native engine call, so it does NOT need engineMutex
-            // (that guards only AudioEngineBridge calls -- see the class doc).
+            // I/O, not a native engine call, so it does NOT need to go
+            // through playbackEngine.
             val bundledSamples = assetLoopLibrary.loadSamples()
             val importedSamples = importedSampleIndex.load()
             val samples = (bundledSamples + importedSamples).associateBy { it.id }
@@ -182,19 +217,15 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 modifiedAtEpochMs = System.currentTimeMillis()
             )
 
-            val started = engineMutex.withLock {
-                val ok = AudioEngineBridge.startEngine()
-                playbackController.nativeInit()
-                playbackController.loadProject(project, samples)
-                ok
-            }
+            val started = playbackEngine.initialize(project, samples)
+            pushProjectMetadata(project)
 
             _uiState.update {
                 it.copy(
                     project = project,
                     samples = samples,
                     sampleList = samples.values.sortedBy { sample -> sample.name },
-                    sampleRate = playbackController.getSampleRate(),
+                    sampleRate = playbackEngine.state.value.sampleRate,
                     message = if (started) null else "Audio engine failed to start"
                 )
             }
@@ -289,27 +320,46 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     /** Rebuilds+recommits the native playback score and auto-saves, both off
-     *  the main thread, per the threading contract. Serialized via
-     *  [engineMutex] against every other engine-touching coroutine (see the
-     *  class doc's SERIALIZATION note) so two rebuilds fired in quick
-     *  succession (e.g. two "Add" taps) never race on the native
-     *  ScoreBuilder's unsynchronized staging state. */
+     *  the main thread, per the threading contract. [PlaybackEngine.loadProject]
+     *  is internally engineMutex-guarded (see that class's SERIALIZATION
+     *  note), so two rebuilds fired in quick succession (e.g. two "Add"
+     *  taps) never race on the native ScoreBuilder's unsynchronized staging
+     *  state -- exactly the guarantee this method provided directly through
+     *  Phase 5. */
     private fun rebuildAndPersist(newProject: Project) {
         _uiState.update { it.copy(project = newProject) }
         val samples = _uiState.value.samples
+        pushProjectMetadata(newProject)
         viewModelScope.launch(Dispatchers.Default) {
-            engineMutex.withLock {
-                playbackController.loadProject(newProject, samples)
-                repository.save(newProject)
-            }
+            playbackEngine.loadProject(newProject, samples)
+            repository.save(newProject)
         }
+    }
+
+    /** Pushes the current project's display name and duration (max loop
+     *  block end, converted to frames) into [PlaybackEngine.state] so
+     *  [com.beatwave.android.audio.BeatWavePlaybackService] can build
+     *  lock-screen MediaMetadata without depending on this ViewModel (Phase
+     *  6 design item 3). Best-effort: if the sample rate isn't known yet
+     *  (engine not started), duration is left at 0 -- refreshed on the next
+     *  project mutation or engine (re)initialization. */
+    private fun pushProjectMetadata(project: Project) {
+        val sampleRate = playbackEngine.state.value.sampleRate
+        val maxBlockEndGridUnit = project.tracks.flatMap { it.loopBlocks }
+            .maxOfOrNull { it.startGridUnit + it.lengthGridUnits } ?: 0
+        val durationFrames = if (sampleRate > 0) {
+            (maxBlockEndGridUnit * GridConstants.framesPerGridUnit(project.bpm, sampleRate)).toLong()
+        } else {
+            0L
+        }
+        playbackEngine.updateProjectMetadata(project.name, durationFrames)
     }
 
     fun messageShown() {
         _uiState.update { it.copy(message = null) }
     }
 
-    // --- Playback transport (cheap/safe from any thread, per AudioEngineBridge doc) ---
+    // --- Playback transport (cheap/safe from any thread, per PlaybackEngine's own contract) ---
 
     fun togglePlayPause() {
         if (_uiState.value.isPlaying) {
@@ -324,13 +374,9 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             // global Stop button (stopPlayback, which finalizes an
             // in-progress recording) may end a recording session.
             if (_uiState.value.recordingTrackSlot != null) return
-            playbackController.pause()
-            playheadJob?.cancel()
-            _uiState.update { it.copy(isPlaying = false) }
+            playbackEngine.pause()
         } else {
-            playbackController.play()
-            _uiState.update { it.copy(isPlaying = true) }
-            startPlayheadPolling()
+            playbackEngine.play()
         }
     }
 
@@ -342,14 +388,12 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             // button uses (see [ensureRecordingFinalizing]/[finalizeRecording])
             // before touching the native transport below -- both paths touch
             // the SAME engine state (mRecording/mRecordingStartFrame/the
-            // input stream) via engineMutex, and must not interleave. A fast
-            // Stop-then-Play could otherwise resume native capture into a
-            // not-yet-finalized recording buffer, indexed against a
-            // transport that's already been reset to 0.
+            // input stream) via PlaybackEngine's engineMutex, and must not
+            // interleave. A fast Stop-then-Play could otherwise resume
+            // native capture into a not-yet-finalized recording buffer,
+            // indexed against a transport that's already been reset to 0.
             ensureRecordingFinalizing()?.join()
-            playbackController.stop()
-            playheadJob?.cancel()
-            _uiState.update { it.copy(isPlaying = false, currentFrame = 0L) }
+            playbackEngine.stop()
         }
     }
 
@@ -367,41 +411,11 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             return
         }
         val project = _uiState.value.project ?: return
-        val sampleRate = playbackController.getSampleRate()
+        val sampleRate = playbackEngine.state.value.sampleRate
         if (sampleRate <= 0) return
         val framesPerGridUnit = GridConstants.framesPerGridUnit(project.bpm, sampleRate)
         val frame = (gridUnit.coerceAtLeast(0) * framesPerGridUnit).toLong()
-        playbackController.seekToFrame(frame)
-        _uiState.update { it.copy(currentFrame = frame) }
-    }
-
-    private fun startPlayheadPolling() {
-        playheadJob?.cancel()
-        playheadJob = viewModelScope.launch {
-            while (isActive && _uiState.value.isPlaying) {
-                val frame = playbackController.getCurrentFrame()
-                // Reuses this SAME polling loop for the live recording
-                // indicator (design item 10) rather than inventing a
-                // second polling mechanism -- recording is always
-                // concurrent with playback (see startRecording's play()
-                // call), so one loop covers both.
-                val isRecording = _uiState.value.recordingTrackSlot != null
-                val recordedFrames = if (isRecording) {
-                    playbackController.getRecordedFrameCount()
-                } else {
-                    0L
-                }
-                _uiState.update { it.copy(currentFrame = frame, recordedFrameCount = recordedFrames) }
-                // Mandate 3: the native buffer cap (~3 min) can be hit
-                // mid-recording; auto-stop gracefully with whatever was
-                // captured rather than silently dropping frames forever.
-                if (isRecording && playbackController.isRecordingCapReached()) {
-                    _uiState.update { it.copy(message = "Recording reached the maximum length and was stopped automatically.") }
-                    stopRecording()
-                }
-                delay(PLAYHEAD_POLL_INTERVAL_MS)
-            }
-        }
+        playbackEngine.seekToFrame(frame)
     }
 
     // --- One-shot loop preview (independent of the arrangement engine) ---
@@ -440,14 +454,13 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
 
     // --- SAF import pipeline (Phase 4 design items 3-6) ---
     //
-    // Neither importAudioFromUri nor confirmPendingImport touches
-    // AudioEngineBridge -- decode is pure Kotlin (AudioImporter), and
-    // persistence is a plain JSON file write (ImportedSampleIndex) -- so
-    // neither needs engineMutex; that Mutex guards only the native engine's
-    // schedule-building/lifecycle calls (see the class doc's SERIALIZATION
-    // note). The merged sample only reaches the engine later, through the
-    // exact same addLoopToSelectedTrack -> rebuildAndPersist path every
-    // bundled sample already uses -- no special-casing needed there.
+    // Neither importAudioFromUri nor confirmPendingImport touches the native
+    // engine -- decode is pure Kotlin (AudioImporter), and persistence is a
+    // plain JSON file write (ImportedSampleIndex) -- so neither needs
+    // playbackEngine. The merged sample only reaches the engine later,
+    // through the exact same addLoopToSelectedTrack -> rebuildAndPersist
+    // path every bundled sample already uses -- no special-casing needed
+    // there.
 
     /** Kicks off the decode pipeline for a SAF-picked [uri] (see
      *  [LoopLibraryBottomSheet]'s "Import from device" button). Runs off the
@@ -530,12 +543,10 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     // [PendingRecordingSample] so the UI can show the SAME
     // [CategoryPickerDialog], and [confirmPendingRecording] finalizes it
     // into a Sample AND auto-places a LoopBlock on the armed track via the
-    // EXISTING [rebuildAndPersist]/[engineMutex] path -- unlike a plain
-    // import, a recording always produces a placed block (per the design
-    // spec's "produces a new loop block on that track"), never just a
-    // library entry. Android permission handling (RECORD_AUDIO) lives in
-    // ArrangementScreen, not here -- these methods assume the caller has
-    // already confirmed the permission is granted before calling
+    // EXISTING [rebuildAndPersist] path every other project mutation in
+    // this class already uses. Android permission handling (RECORD_AUDIO)
+    // lives in ArrangementScreen, not here -- these methods assume the
+    // caller has already confirmed the permission is granted before calling
     // [startRecording].
 
     /** Job for the currently in-flight (or most recently launched) recording
@@ -550,11 +561,11 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
 
     /** Requests the native engine to begin capture for [trackSlot] (the
      *  track the user tapped Record on). Also starts/continues arrangement
-     *  playback per the design spec's arm-and-play UX, by reusing the
-     *  existing [ProjectPlaybackController.play] -- never duplicating its
-     *  logic. No-ops (with a message) if a recording is already in
-     *  progress on another track, since the native engine supports only
-     *  one recording at a time. */
+     *  playback per the design spec's arm-and-play UX, via
+     *  [PlaybackEngine.startRecording] -- never duplicating its logic.
+     *  No-ops (with a message) if a recording is already in progress on
+     *  another track, since the native engine supports only one recording
+     *  at a time. */
     fun startRecording(trackSlot: Int) {
         val current = _uiState.value
         if (current.recordingTrackSlot != null) {
@@ -574,17 +585,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         // relative to its own native call.
         _uiState.update { it.copy(recordingTrackSlot = trackSlot, recordedFrameCount = 0L) }
         viewModelScope.launch(Dispatchers.Default) {
-            val started = engineMutex.withLock {
-                val ok = playbackController.startRecording()
-                if (ok) {
-                    playbackController.play()
-                }
-                ok
-            }
-            if (started) {
-                _uiState.update { it.copy(isPlaying = true) }
-                startPlayheadPolling()
-            } else {
+            val started = playbackEngine.startRecording()
+            if (!started) {
                 _uiState.update {
                     it.copy(recordingTrackSlot = null, message = "Couldn't start recording -- microphone unavailable.")
                 }
@@ -598,6 +600,17 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
      *  silently no-opping. */
     fun recordingPermissionDenied() {
         _uiState.update { it.copy(message = "Microphone permission is needed to record.") }
+    }
+
+    /** Called by ArrangementScreen when the user declines the (Phase 6,
+     *  API 33+) POST_NOTIFICATIONS permission prompt shown the first time
+     *  playback starts -- mirrors [recordingPermissionDenied] exactly.
+     *  Playback and the background foreground service are unaffected by
+     *  this denial (see BeatWavePlaybackService); only the lock-screen/
+     *  notification surface won't be visible, which this message makes
+     *  clear, once, rather than silently no-opping. */
+    fun notificationPermissionDenied() {
+        _uiState.update { it.copy(message = "Notification permission is needed to show playback controls on the lock screen.") }
     }
 
     /** Starts finalizing the in-progress recording if one hasn't already
@@ -626,23 +639,24 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     /** Stops the in-progress recording (see [startRecording]), reads back
-     *  the real captured start frame + frame count via the SAME native
-     *  derivation the live callback used, and either discards a too-short
+     *  the real captured start frame + frame count via
+     *  [PlaybackEngine.stopRecording] (which uses the SAME native
+     *  derivation the live callback used), and either discards a too-short
      *  accidental take or stashes it as [ArrangementUiState.pendingRecording]
      *  so the UI shows [CategoryPickerDialog] (reused verbatim from Phase
      *  4) before finalizing it (see [confirmPendingRecording]).
      *
      *  [ArrangementUiState.recordingTrackSlot] is deliberately left non-null
-     *  until AFTER the engineMutex-protected native stopRecording() call
-     *  below actually completes (rather than being nulled synchronously up
-     *  front) -- this keeps every recordingTrackSlot-gated guard (the global
-     *  Play/Pause button's disabled state, [togglePlayPause]'s pause guard,
-     *  [seekToGridUnit]'s seek guard) accurate for the WHOLE finalize
-     *  window, not just until this function happens to be entered. Only
-     *  reachable via [ensureRecordingFinalizing], which dedupes concurrent
-     *  callers via [recordingFinalizeJob] so this never runs twice for the
-     *  same recording. Always call via [ensureRecordingFinalizing] --
-     *  never launch this directly. */
+     *  until AFTER [PlaybackEngine.stopRecording] actually completes
+     *  (rather than being nulled synchronously up front) -- this keeps
+     *  every recordingTrackSlot-gated guard (the global Play/Pause button's
+     *  disabled state, [togglePlayPause]'s pause guard, [seekToGridUnit]'s
+     *  seek guard) accurate for the WHOLE finalize window, not just until
+     *  this function happens to be entered. Only reachable via
+     *  [ensureRecordingFinalizing], which dedupes concurrent callers via
+     *  [recordingFinalizeJob] so this never runs twice for the same
+     *  recording. Always call via [ensureRecordingFinalizing] -- never
+     *  launch this directly. */
     private suspend fun finalizeRecording() {
         val current = _uiState.value
         val trackSlot = current.recordingTrackSlot ?: return
@@ -653,14 +667,9 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         if (!recordingsDir.exists()) recordingsDir.mkdirs()
         val outputFile = File(recordingsDir, "${UUID.randomUUID()}.wav")
 
-        val (startFrame, framesWritten) = engineMutex.withLock {
-            // Read the start frame BEFORE stopRecording() -- its
-            // validity after the native side closes the input stream
-            // is unspecified, so this order is the safe one.
-            val start = playbackController.getRecordingStartFrame()
-            val frames = playbackController.stopRecording(outputFile.absolutePath)
-            start to frames
-        }
+        val result = playbackEngine.stopRecording(outputFile.absolutePath)
+        val startFrame = result.startFrame
+        val framesWritten = result.framesWritten
 
         // Only now -- after the native engine has actually stopped
         // capturing and closed the input stream -- is it safe to treat this
@@ -724,8 +733,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
      *  into the SAME combined samples/sampleList state, AND -- unlike a
      *  plain import -- auto-places a new [LoopBlock] on the armed track at
      *  the grid position already computed in [stopRecording], via the
-     *  EXISTING [rebuildAndPersist] (engineMutex-guarded) path every other
-     *  project mutation in this class already uses. */
+     *  EXISTING [rebuildAndPersist] path every other project mutation in
+     *  this class already uses. */
     fun confirmPendingRecording(category: SampleCategory) {
         val pending = _uiState.value.pendingRecording ?: return
         val project = _uiState.value.project
@@ -773,33 +782,54 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
 
     override fun onCleared() {
         super.onCleared()
-        playheadJob?.cancel()
         previewPlayer?.release()
         previewPlayer = null
         // viewModelScope is already cancelled by the time onCleared runs, and
-        // teardown must be deterministic (not fire-and-forget) so a fast
-        // subsequent ArrangementViewModel's startEngine() can never overlap
-        // with this stopEngine() -- block on it via the same companion-wide
-        // engineMutex used by every other engine-touching coroutine. Blocking
-        // here is an acceptable tradeoff since onCleared is not a hot path.
+        // teardown (when it happens at all -- see the guard below) must be
+        // deterministic (not fire-and-forget) so a fast subsequent
+        // ArrangementViewModel's playbackEngine.initialize() can never
+        // overlap with this shutdown() -- block on it via PlaybackEngine's
+        // own internal engineMutex. Blocking here is an acceptable tradeoff
+        // since onCleared is not a hot path.
+        //
+        // NOTE: this deliberately does NOT run just because the app is
+        // backgrounded (Home) -- the Activity is only STOPPED, not
+        // destroyed, so onCleared() never fires from that alone; only a
+        // genuine ViewModelStore teardown (Activity finish/task removal, or
+        // process death) reaches here.
+        //
+        // GUARD (fixes a real Phase 6 regression a code review caught): a
+        // genuine ViewModelStore teardown can ALSO happen while transport is
+        // still playing -- e.g. the user swipes the app away from Recents,
+        // or finishes the root Activity, while music is playing. That is
+        // very different from "Home-press backgrounding": ComponentActivity.
+        // onDestroy()/ViewModelStore.clear() DO run in that case, so an
+        // unconditional shutdown() here would tear down the one shared
+        // native engine out from under BeatWavePlaybackService, which is
+        // still running as an independent foreground service on the SAME
+        // PlaybackEngine singleton -- silently killing "background playback"
+        // for exactly the scenario Phase 6 exists to support. So: only tear
+        // the engine down here when transport is genuinely STOPPED
+        // ([PlaybackEngineState.isStopped]) -- the same condition
+        // BeatWavePlaybackService's own stateObserverJob already uses to
+        // decide it's safe to stopSelf(). If transport is playing, or merely
+        // paused-but-resumable (isStopped == false), leave the engine (and
+        // Service) alone; a subsequent ArrangementViewModel's
+        // playbackEngine.initialize() is written to be idempotent against an
+        // already-open engine, and the Service's own state collector will
+        // eventually tear things down once transport genuinely stops. This
+        // still preserves every existing Phase 3-5 instrumented test's
+        // cross-test-class engine isolation assumption, because each of
+        // those tests explicitly stops transport (via the UI's Stop button)
+        // before its ActivityScenario.close() -- so isStopped is already
+        // true by the time onCleared() runs for them.
+        if (!playbackEngine.state.value.isStopped) return
         runBlocking(Dispatchers.Default) {
-            engineMutex.withLock {
-                if (AudioEngineBridge.isRecording()) {
-                    // Best-effort finalize (and discard) any in-flight
-                    // recording so the native input stream is cleanly
-                    // closed before stopEngine() tears down the whole
-                    // engine -- avoids leaking an open input stream across
-                    // a fast ViewModel recreation. The file itself is
-                    // throwaway; the user never confirmed a category for
-                    // it, so there's no pending-state cleanup to do.
-                    val recordingsDir = File(getApplication<Application>().filesDir, RECORDINGS_DIR_NAME)
-                    if (!recordingsDir.exists()) recordingsDir.mkdirs()
-                    val discardFile = File(recordingsDir, ".discard-${UUID.randomUUID()}.wav")
-                    AudioEngineBridge.stopRecording(discardFile.absolutePath)
-                    discardFile.delete()
-                }
-                AudioEngineBridge.stopEngine()
-            }
+            val recordingsDir = File(getApplication<Application>().filesDir, RECORDINGS_DIR_NAME)
+            if (!recordingsDir.exists()) recordingsDir.mkdirs()
+            val discardFile = File(recordingsDir, ".discard-${UUID.randomUUID()}.wav")
+            playbackEngine.shutdown(discardFile)
+            discardFile.delete()
         }
     }
 
@@ -808,7 +838,6 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         private const val DEFAULT_BPM = 90
         private const val MAX_TRACKS = 8
         private const val DEFAULT_LOOP_REPEATS = 4
-        private const val PLAYHEAD_POLL_INTERVAL_MS = 50L
 
         /** Sibling of [com.beatwave.android.data.library.AudioImporter]'s
          *  `imported_samples` directory -- see design item 10. */
@@ -818,12 +847,5 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
          *  and discarded rather than becoming a degenerate near-zero block
          *  (design item 10). */
         private const val MIN_RECORDING_DURATION_MS = 250L
-
-        /** Serializes every coroutine that touches [AudioEngineBridge]'s
-         *  engine-lifecycle or schedule-building calls -- shared across all
-         *  ArrangementViewModel instances (companion-object scope) because
-         *  AudioEngineBridge itself is a process-wide singleton. See the
-         *  class doc's SERIALIZATION note. */
-        private val engineMutex = Mutex()
     }
 }

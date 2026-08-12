@@ -93,7 +93,10 @@ dependencies {
     // Phase 1: JSON persistence for Project/Track/LoopBlock/Sample.
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
-    // Phase 6 will add media3/MediaSession.
+    // Phase 6: MediaSession + MediaSessionService for lock-screen/notification
+    // transport controls and background playback. media3-common comes in
+    // transitively via media3-session.
+    implementation("androidx.media3:media3-session:1.5.1")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

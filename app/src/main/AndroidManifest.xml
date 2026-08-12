@@ -9,7 +9,22 @@
     -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!--
+      Phase 6: background playback via a MediaSessionService. FOREGROUND_SERVICE
+      and FOREGROUND_SERVICE_MEDIA_PLAYBACK are required to run a media-playback
+      foreground service on API 34+ (targetSdk 35 here); POST_NOTIFICATIONS is
+      the API 33+ runtime permission needed to actually show the media
+      notification (requested at point of use when playback first starts,
+      see ArrangementScreen; the foreground service itself still runs, and
+      playback still works, without it; only the visible notification surface
+      is affected).
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
+        android:name=".BeatWaveApplication"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
@@ -25,5 +40,22 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Phase 6: wraps PlaybackEngine (see com.beatwave.android.audio) in a
+          Media3 MediaSessionService for lock-screen/notification transport
+          controls and background playback survival. Not exported to other
+          apps (no Android Auto/Wear OS companion in scope for v1); the
+          intent-filter below is what lets the OS media-session framework
+          (and this app's own startForegroundService call) discover it.
+        -->
+        <service
+            android:name=".audio.BeatWavePlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
