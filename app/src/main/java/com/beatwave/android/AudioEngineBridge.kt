@@ -231,4 +231,42 @@ object AudioEngineBridge {
     external fun nativeTestGetRecordedFrameCount(handle: Long): Long
 
     external fun nativeTestDestroyOfflineEngine(handle: Long)
+
+    // --- Offline export (Phase 7, background thread only) ---
+    // Functionally identical to the nativeTest* offline-engine family above
+    // (same underlying AudioEngine offline-mode construction/scheduling) --
+    // kept as separate entry points purely so production export code (see
+    // com.beatwave.android.audio.PlaybackEngine.exportToFile) never calls
+    // anything named "Test". See audio_engine_jni.cpp's Phase 7 section for
+    // the full rationale.
+
+    /** Creates a fresh offline engine instance at [sampleRate] for
+     *  rendering, not attached to any real Oboe stream. Returns an opaque
+     *  handle for the other nativeExport* calls; release it with
+     *  [nativeExportDestroyEngine]. */
+    external fun nativeExportCreateEngine(assetManager: AssetManager, sampleRate: Int): Long
+
+    external fun nativeExportBeginProject(handle: Long, bpm: Int)
+    external fun nativeExportAddTrack(handle: Long, slot: Int)
+
+    external fun nativeExportAddLoopBlock(
+        handle: Long,
+        trackSlot: Int,
+        sampleAssetPath: String,
+        startGridUnit: Int,
+        lengthGridUnits: Int,
+        volume: Float,
+        trimStartMs: Long,
+        trimEndMs: Long,
+        pitchSemitones: Float
+    ): Boolean
+
+    external fun nativeExportCommitProject(handle: Long)
+
+    /** Renders the full [totalFrames]-frame arrangement already committed on
+     *  [handle] and writes it to [outputFilePath] as a canonical 16-bit PCM
+     *  RIFF/WAVE file. Returns [totalFrames] on success, or -1 on failure. */
+    external fun nativeExportRenderToFile(handle: Long, totalFrames: Long, outputFilePath: String): Long
+
+    external fun nativeExportDestroyEngine(handle: Long)
 }

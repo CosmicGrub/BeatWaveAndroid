@@ -136,6 +136,39 @@ class PlaybackEngine(context: Context) {
         }
     }
 
+    /**
+     * Phase 7: renders [project]/[samples] offline to a WAV file at
+     * [outputFilePath], using a throwaway offline engine (see
+     * [ProjectPlaybackController.exportToFile]) entirely separate from this
+     * singleton's live engine -- exporting never pauses/interrupts whatever
+     * live playback is already happening. Uses this engine's already-known
+     * [PlaybackEngineState.sampleRate] (so the export sounds identical --
+     * same tempo/pitch -- to what's already playing) and
+     * [PlaybackEngineState.durationFrames] (kept fresh by
+     * ArrangementViewModel.pushProjectMetadata on every project mutation) as
+     * the render length. Returns false without touching the native engine at
+     * all if either isn't known yet/is degenerate (sampleRate <= 0, e.g. the
+     * engine hasn't started; durationFrames <= 0, e.g. nothing has been
+     * placed on the timeline yet -- nothing to export).
+     *
+     * engineMutex-guarded like every other engine-touching call, even though
+     * the offline engine itself is independent of the live one: addLoopBlock
+     * still funnels every sample decode through the same process-wide
+     * SampleBank-adjacent asset-decode machinery [AudioEngine.init] wires up,
+     * so this still counts as a native schedule-building operation under the
+     * class doc's SERIALIZATION contract.
+     */
+    suspend fun exportToFile(project: Project, samples: Map<String, Sample>, outputFilePath: String): Boolean =
+        engineMutex.withLock {
+            val sampleRate = _state.value.sampleRate
+            val totalFrames = _state.value.durationFrames
+            if (sampleRate <= 0 || totalFrames <= 0) {
+                false
+            } else {
+                controller.exportToFile(project, samples, sampleRate, totalFrames, outputFilePath)
+            }
+        }
+
     /** Pushes plain display metadata for the current project -- see
      *  [PlaybackEngineState.projectName]/[PlaybackEngineState.durationFrames]. */
     fun updateProjectMetadata(name: String, durationFrames: Long) {

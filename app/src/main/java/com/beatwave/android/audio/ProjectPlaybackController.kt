@@ -79,6 +79,59 @@ class ProjectPlaybackController(private val context: Context) {
         AudioEngineBridge.commitProject()
     }
 
+    /**
+     * Renders [project] (via [samples], resolved exactly like [loadProject]
+     * above -- same asset-path/imported-file resolution, same "unknown
+     * sample id skipped" behavior) offline to a fresh 16-bit PCM WAV file at
+     * [outputFilePath], at [sampleRate] and [totalFrames] long. Uses a
+     * throwaway offline engine handle (see AudioEngine.h's "offline/test
+     * mode" doc comment) entirely separate from the live engine this
+     * controller otherwise drives, so exporting never touches -- and can
+     * safely run concurrently with -- ongoing live playback. Returns true on
+     * success.
+     *
+     * Background-thread only, same contract as [loadProject]: this does
+     * asset decode/resample (addLoopBlock) and file I/O (the native
+     * WavWriter call).
+     */
+    fun exportToFile(
+        project: Project,
+        samples: Map<String, Sample>,
+        sampleRate: Int,
+        totalFrames: Long,
+        outputFilePath: String
+    ): Boolean {
+        val handle = AudioEngineBridge.nativeExportCreateEngine(context.assets, sampleRate)
+        try {
+            AudioEngineBridge.nativeExportBeginProject(handle, project.bpm)
+            for (track in project.tracks) {
+                AudioEngineBridge.nativeExportAddTrack(handle, track.slot)
+                for (block in track.loopBlocks) {
+                    val sample = samples[block.sampleId] ?: continue
+                    val assetPath = when (val source = sample.source) {
+                        is SampleSource.BundledAsset -> source.assetPath
+                        is SampleSource.ImportedFile -> source.uri
+                    }
+                    AudioEngineBridge.nativeExportAddLoopBlock(
+                        handle,
+                        track.slot,
+                        assetPath,
+                        block.startGridUnit,
+                        block.lengthGridUnits,
+                        block.volume,
+                        block.trimStartMs,
+                        block.trimEndMs ?: -1L,
+                        block.pitchSemitones
+                    )
+                }
+            }
+            AudioEngineBridge.nativeExportCommitProject(handle)
+            return AudioEngineBridge.nativeExportRenderToFile(handle, totalFrames, outputFilePath) == totalFrames
+        } finally {
+            AudioEngineBridge.nativeExportDestroyEngine(handle)
+        }
+    }
+
     fun play() = AudioEngineBridge.play()
     fun pause() = AudioEngineBridge.pause()
     fun stop() = AudioEngineBridge.stop()

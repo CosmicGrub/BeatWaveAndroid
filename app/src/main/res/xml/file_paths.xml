@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Phase 7: declares which directories the FileProvider (see
+  AndroidManifest.xml) is allowed to mint content:// Uris into.
+  cache-path/name="exports" matches ArrangementViewModel's
+  EXPORTS_DIR_NAME ("exports", under cacheDir) exactly: the only
+  directory an exported WAV is ever written to.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="exports" path="exports/" />
+</paths>

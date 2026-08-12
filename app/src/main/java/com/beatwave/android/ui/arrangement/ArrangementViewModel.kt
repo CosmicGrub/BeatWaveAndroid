@@ -102,7 +102,18 @@ data class ArrangementUiState(
      *  indicator, polled the same way [currentFrame] already is. */
     val recordedFrameCount: Long = 0L,
     val pendingRecording: PendingRecordingSample? = null,
-    val message: String? = null
+    val message: String? = null,
+    /** True while [ArrangementViewModel.exportProject] has an offline render
+     *  in flight -- lets the UI disable the Export button/show a spinner
+     *  rather than let a second tap start a redundant concurrent render. */
+    val isExporting: Boolean = false,
+    /** Set by [ArrangementViewModel.exportProject] the moment a render
+     *  finishes successfully; the absolute path of the freshly-written WAV
+     *  file the UI should hand to Android's share sheet (Phase 7 design item
+     *  "Export/Share"). One-shot -- consumed via
+     *  [ArrangementViewModel.shareFileConsumed] the same way [pendingImport]/
+     *  [pendingRecording] are consumed by their own confirm/cancel calls. */
+    val pendingShareFilePath: String? = null
 )
 
 /**
@@ -535,6 +546,68 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    // --- Export/Share (Phase 7) ---
+    //
+    // Renders the current project offline to a WAV file (via
+    // [PlaybackEngine.exportToFile], a throwaway offline engine entirely
+    // separate from the live one -- exporting never interrupts ongoing
+    // playback) and stashes the result as [ArrangementUiState.pendingShareFilePath]
+    // for [ArrangementScreen] to hand to Android's native share sheet -- the
+    // same one-shot-state-then-consume shape [pendingImport]/[pendingRecording]
+    // already use, just consumed by firing an Intent instead of showing a
+    // dialog. Written under `cacheDir/exports/` (not filesDir, unlike
+    // recordings/imports): an export is a disposable rendering of data that
+    // already lives in the project, not source-of-truth data itself, so it's
+    // fine for the OS to reclaim this directory under storage pressure.
+
+    /** Renders the current project to a shareable WAV file. No-ops (with a
+     *  user-facing message) if there's nothing placed on the timeline yet,
+     *  or if a previous export is still in flight. */
+    fun exportProject() {
+        val current = _uiState.value
+        val project = current.project
+        if (current.isExporting) return
+        if (project == null || project.tracks.all { it.loopBlocks.isEmpty() }) {
+            _uiState.update { it.copy(message = "Add some loops to the timeline before exporting.") }
+            return
+        }
+        _uiState.update { it.copy(isExporting = true) }
+        viewModelScope.launch(Dispatchers.Default) {
+            val exportsDir = File(getApplication<Application>().cacheDir, EXPORTS_DIR_NAME)
+            if (!exportsDir.exists()) exportsDir.mkdirs()
+            val outputFile = File(exportsDir, "${sanitizeFileName(project.name)}.wav")
+
+            val success = playbackEngine.exportToFile(project, current.samples, outputFile.absolutePath)
+            _uiState.update {
+                it.copy(
+                    isExporting = false,
+                    pendingShareFilePath = if (success) outputFile.absolutePath else null,
+                    message = if (success) null else "Export failed. Please try again."
+                )
+            }
+        }
+    }
+
+    /** Consumes [ArrangementUiState.pendingShareFilePath] once
+     *  [ArrangementScreen] has fired the share Intent for it -- mirrors
+     *  [cancelPendingImport]/[confirmPendingImport] clearing their own
+     *  one-shot state after acting on it. */
+    fun shareFileConsumed() {
+        _uiState.update { it.copy(pendingShareFilePath = null) }
+    }
+
+    /** Loop block names/BPM are free text (see [Project.name]); a share
+     *  target's filename can't contain path separators or most punctuation.
+     *  Keeps only alphanumerics/spaces/dashes/underscores, collapses
+     *  anything else to "_", and falls back to a fixed name if that leaves
+     *  nothing usable (e.g. an emoji-only project name). */
+    private fun sanitizeFileName(name: String): String {
+        val cleaned = name.map { c -> if (c.isLetterOrDigit() || c == ' ' || c == '-' || c == '_') c else '_' }
+            .joinToString("")
+            .trim()
+        return cleaned.ifEmpty { "BeatWave Project" }
+    }
+
     // --- Recording (Phase 5 design items 9-10) ---
     //
     // Mirrors the SAF import pipeline's pending-then-confirm shape
@@ -847,5 +920,10 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
          *  and discarded rather than becoming a degenerate near-zero block
          *  (design item 10). */
         private const val MIN_RECORDING_DURATION_MS = 250L
+
+        /** Phase 7: where rendered export WAVs are written, under
+         *  `cacheDir` rather than `filesDir` -- see the Export/Share
+         *  section's doc comment for why. */
+        private const val EXPORTS_DIR_NAME = "exports"
     }
 }

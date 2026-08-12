@@ -1,7 +1,9 @@
 package com.beatwave.android.ui.arrangement
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -63,11 +65,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.beatwave.android.audio.GridConstants
 import com.beatwave.android.data.model.LoopBlock
 import com.beatwave.android.data.model.Sample
 import com.beatwave.android.data.model.Track
+import java.io.File
 
 private val HEADER_WIDTH: Dp = 84.dp
 private val TRACK_ROW_HEIGHT: Dp = 72.dp
@@ -83,7 +87,22 @@ private const val MIN_TIMELINE_GRID_UNITS = 128
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
+fun ArrangementScreen(
+    viewModel: ArrangementViewModel = viewModel(),
+    /** Phase 7: an audio [Uri] shared INTO BeatWave from another app via
+     *  ACTION_SEND (see [com.beatwave.android.MainActivity]'s intent
+     *  handling), or null if the app was launched normally. Passed down as
+     *  plain state rather than this Composable reading the Activity's Intent
+     *  itself, so the same one LaunchedEffect(key) below handles both a cold
+     *  launch (onCreate) and an already-running app receiving a new share
+     *  (onNewIntent) identically. */
+    incomingShareUri: Uri? = null,
+    /** Called once [incomingShareUri] has been handed to
+     *  [ArrangementViewModel.importAudioFromUri] below, so the caller
+     *  (MainActivity) can clear its own state and not re-import the same
+     *  Uri again on the next recomposition. */
+    onIncomingShareUriConsumed: () -> Unit = {}
+) {
     val uiState by viewModel.uiState.collectAsState()
     var showLibrary by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -156,10 +175,62 @@ fun ArrangementScreen(viewModel: ArrangementViewModel = viewModel()) {
         }
     }
 
+    // Phase 7, receive side: reuses the EXACT SAME SAF import pipeline
+    // (importAudioFromUri -> pendingImport -> CategoryPickerDialog) a
+    // device-picked file already goes through -- see importAudioFromUri's
+    // own doc comment. Keyed on the Uri itself (not just non-null) so a
+    // second distinct share while the first is still mid-decode still
+    // triggers correctly.
+    LaunchedEffect(incomingShareUri) {
+        if (incomingShareUri != null) {
+            viewModel.importAudioFromUri(incomingShareUri)
+            onIncomingShareUriConsumed()
+        }
+    }
+
+    // Phase 7, send side: fires the moment ArrangementViewModel.exportProject
+    // finishes rendering. FileProvider (not a raw file:// Uri, blocked by
+    // FileUriExposedException on API 24+) grants the receiving app temporary
+    // read access to the exported WAV under cacheDir/exports/ -- see the
+    // manifest's <provider> entry and res/xml/file_paths.xml for the
+    // matching cache-path declaration.
+    LaunchedEffect(uiState.pendingShareFilePath) {
+        val path = uiState.pendingShareFilePath
+        if (path != null) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "audio/wav"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(sendIntent, "Share BeatWave project"))
+            viewModel.shareFileConsumed()
+        }
+    }
+
     val project = uiState.project
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("BeatWave") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("BeatWave") },
+                actions = {
+                    if (uiState.isExporting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp).padding(horizontal = 16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = viewModel::exportProject,
+                            modifier = Modifier.padding(horizontal = 8.dp).testTag("export_button")
+                        ) {
+                            Text("Export")
+                        }
+                    }
+                }
+            )
+        },
         bottomBar = {
             PlaybackControlBar(
                 isPlaying = uiState.isPlaying,

@@ -39,6 +39,29 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+              Phase 7: lets BeatWave show up in other apps' share sheets as
+              an import target ("the app can receive shared audio files as
+              import candidates", per the design spec); see
+              MainActivity.handleShareIntent. Deliberately plain "standard"
+              launch mode, not singleTask: BeatWaveApplication's app-wide
+              PlaybackEngine singleton (Phase 6) means a second MainActivity
+              instance existing briefly is harmless (both instances read/
+              drive the SAME underlying state), and singleTask would let
+              ActivityScenario.launch(MainActivity::class.java) in
+              instrumented tests silently reuse AndroidJUnitRunner's own
+              pre-test warm-up MainActivity instance instead of a fresh one:
+              a real bug this exact tradeoff caused during Phase 7's own
+              on-device verification (see ExportShareTest). onNewIntent below
+              still exists as a defensive no-cost handler for the rarer cases
+              Android redelivers to an existing standard-launch-mode instance
+              anyway (e.g. a caller-set FLAG_ACTIVITY_SINGLE_TOP).
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
         </activity>
 
         <!--
@@ -57,5 +80,24 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!--
+          Phase 7: grants the receiving app in the share sheet temporary
+          read access to a WAV file under cacheDir/exports/ via a content://
+          Uri (see ArrangementScreen's outgoing-share LaunchedEffect);
+          exported="false" plus grantUriPermissions is the standard
+          FileProvider pattern, since a raw file:// Uri would throw
+          FileUriExposedException on API 24+. res/xml/file_paths.xml
+          declares which directory is shared.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

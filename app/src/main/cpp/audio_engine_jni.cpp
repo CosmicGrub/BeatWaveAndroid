@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "AudioEngine.h"
+#include "WavWriter.h"
 
 // Single narrow JNI surface between Kotlin (AudioEngineBridge.kt) and the
 // native engine, per the implementation plan. Add new native methods here
@@ -292,6 +293,87 @@ Java_com_beatwave_android_AudioEngineBridge_nativeTestGetRecordedFrameCount(JNIE
 
 JNIEXPORT void JNICALL
 Java_com_beatwave_android_AudioEngineBridge_nativeTestDestroyOfflineEngine(JNIEnv *, jobject, jlong handle) {
+    delete handleToEngine(handle);
+}
+
+// --- Phase 7: offline export -- renders a project to a WAV file ---
+//
+// An "offline export engine" is functionally identical to the nativeTest*
+// offline engine above -- both are just a beatwave::AudioEngine constructed
+// at a fixed sample rate that never touches real hardware (mandate 10's
+// whole point: live and offline modes share the exact same
+// ScoreBuilder/renderScore code, see AudioEngine.h's class doc comment).
+// These are separate, identically-implemented entry points rather than
+// reusing nativeTestCreateOfflineEngine et al. directly, purely so
+// production export code (ArrangementViewModel, via PlaybackEngine) never
+// calls anything named "Test" -- the two families are free to diverge later
+// without one accidentally breaking the other's callers.
+
+JNIEXPORT jlong JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeExportCreateEngine(
+        JNIEnv *env, jobject, jobject assetManager, jint sampleRate) {
+    AAssetManager *mgr = AAssetManager_fromJava(env, assetManager);
+    auto *exportEngine = new beatwave::AudioEngine(sampleRate);
+    exportEngine->init(mgr);
+    return reinterpret_cast<jlong>(exportEngine);
+}
+
+JNIEXPORT void JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeExportBeginProject(JNIEnv *, jobject, jlong handle, jint bpm) {
+    handleToEngine(handle)->beginProject(bpm);
+}
+
+JNIEXPORT void JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeExportAddTrack(JNIEnv *, jobject, jlong handle, jint slot) {
+    handleToEngine(handle)->addTrack(slot);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeExportAddLoopBlock(
+        JNIEnv *env, jobject, jlong handle,
+        jint trackSlot, jstring sampleAssetPath, jint startGridUnit, jint lengthGridUnits,
+        jfloat volume, jlong trimStartMs, jlong trimEndMs, jfloat pitchSemitones) {
+    const std::string path = jstringToStd(env, sampleAssetPath);
+    const bool ok = handleToEngine(handle)->addLoopBlock(
+            trackSlot, path, startGridUnit, lengthGridUnits, volume, trimStartMs, trimEndMs, pitchSemitones);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeExportCommitProject(JNIEnv *, jobject, jlong handle) {
+    handleToEngine(handle)->commitProject();
+}
+
+/**
+ * Renders the full [totalFrames]-frame arrangement already committed on
+ * [handle] in one shot (renderOffline has no realtime deadline and no
+ * per-call chunk-size assumption -- see AudioEngine::renderOffline -- so
+ * unlike the live callback path there is no reason to chunk this), then
+ * writes it out via WavWriter exactly like stopRecording()/testStopRecording()
+ * already do for a captured recording buffer. Returns totalFrames on
+ * success, -1 on failure (degenerate totalFrames, or a WavWriter failure --
+ * e.g. an unwritable outputFilePath).
+ */
+JNIEXPORT jlong JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeExportRenderToFile(
+        JNIEnv *env, jobject, jlong handle, jlong totalFrames, jstring outputFilePath) {
+    if (totalFrames <= 0) {
+        return -1;
+    }
+    beatwave::AudioEngine *exportEngine = handleToEngine(handle);
+    std::vector<float> buffer(static_cast<size_t>(totalFrames) * 2);
+    exportEngine->renderOffline(static_cast<int32_t>(totalFrames), buffer.data());
+    const bool ok = beatwave::WavWriter::writeFile(
+            jstringToStd(env, outputFilePath),
+            buffer.data(),
+            totalFrames,
+            /*channelCount=*/2,
+            exportEngine->getSampleRate());
+    return ok ? totalFrames : -1;
+}
+
+JNIEXPORT void JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeExportDestroyEngine(JNIEnv *, jobject, jlong handle) {
     delete handleToEngine(handle);
 }
 
