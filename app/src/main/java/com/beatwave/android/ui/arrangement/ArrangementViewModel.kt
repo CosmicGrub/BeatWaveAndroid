@@ -263,11 +263,30 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         }
         val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
 
+        val startGridUnit = defaultStartGridUnit(track)
+        val lengthGridUnits = defaultLengthGridUnits(sample, project.bpm)
+        // Phase 8: enforce the spec's "max song length ~2-4 minutes" /
+        // "Out of Scope for v1: unlimited... song length" -- without this,
+        // repeatedly tapping Add on a track with no more room would just
+        // keep extending the timeline forever (see GridConstants.
+        // maxSongLengthGridUnits's own doc comment for the full story).
+        val maxGridUnits = GridConstants.maxSongLengthGridUnits(project.bpm)
+        if (startGridUnit + lengthGridUnits > maxGridUnits) {
+            _uiState.update {
+                it.copy(
+                    message = "Reached the maximum song length " +
+                        "(${GridConstants.MAX_SONG_LENGTH_SECONDS / 60} minutes) -- " +
+                        "trim or remove a block to add more."
+                )
+            }
+            return
+        }
+
         val newBlock = LoopBlock(
             id = UUID.randomUUID().toString(),
             sampleId = sample.id,
-            startGridUnit = defaultStartGridUnit(track),
-            lengthGridUnits = defaultLengthGridUnits(sample, project.bpm)
+            startGridUnit = startGridUnit,
+            lengthGridUnits = lengthGridUnits
         )
         val newTracks = project.tracks.map { t ->
             if (t.slot == trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
@@ -645,7 +664,31 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             _uiState.update { it.copy(message = "A recording is already in progress on another track.") }
             return
         }
-        if (current.project == null) return
+        val project = current.project ?: return
+        // Phase 8: the same max-song-length guard addLoopToSelectedTrack
+        // enforces, applied at the one other place a block's timeline
+        // position can grow the song -- a recording starting at (or past)
+        // the cap would otherwise be the one remaining way to exceed it
+        // (see GridConstants.maxSongLengthGridUnits's doc comment). A
+        // recording already in flight is never truncated mid-take here
+        // (that would discard audio the user is actively capturing); this
+        // only blocks STARTING a new one once the transport has already
+        // reached the limit. Skipped if the sample rate isn't known yet
+        // (engine not started) -- startRecording() would fail on its own in
+        // that case regardless.
+        if (current.sampleRate > 0) {
+            val currentGridUnit = GridConstants.startGridUnitForFrame(current.currentFrame, project.bpm, current.sampleRate)
+            if (currentGridUnit >= GridConstants.maxSongLengthGridUnits(project.bpm)) {
+                _uiState.update {
+                    it.copy(
+                        message = "Reached the maximum song length " +
+                            "(${GridConstants.MAX_SONG_LENGTH_SECONDS / 60} minutes) -- " +
+                            "seek back to record more."
+                    )
+                }
+                return
+            }
+        }
         // Optimistically claim the recording slot synchronously, BEFORE the
         // async engine call completes -- otherwise a rapid double-tap on the
         // SAME track's Record button would have both taps read

@@ -42,4 +42,24 @@ object GridConstants {
         val perUnit = framesPerGridUnit(bpm, sampleRateHz)
         return kotlin.math.ceil(frameCount.toDouble() / perUnit).toInt().coerceAtLeast(1)
     }
+
+    // --- Phase 8: max song length (design spec's "max song length ~2-4
+    // minutes", and explicitly listed under "Out of Scope for v1": "Unlimited
+    // tracks or song length"). Track count was already hard-capped at 8
+    // (ArrangementViewModel.MAX_TRACKS) since Phase 1, but nothing capped
+    // overall arrangement length -- ArrangementViewModel.addLoopToSelectedTrack
+    // always appended after a track's existing content with no bound, so
+    // repeatedly tapping "Add" could grow a song indefinitely. Expressed
+    // directly in grid units (independent of sample rate -- a grid unit's
+    // real-world duration is purely a function of bpm, see
+    // [framesPerGridUnit]'s formula), so callers never need a sample rate
+    // just to check this. ---
+
+    /** Spec's stated upper bound. */
+    const val MAX_SONG_LENGTH_SECONDS: Int = 240 // 4 minutes
+
+    /** The grid-unit position at/beyond which a song has reached
+     *  [MAX_SONG_LENGTH_SECONDS] at [bpm]. */
+    fun maxSongLengthGridUnits(bpm: Int): Int =
+        (MAX_SONG_LENGTH_SECONDS * bpm.toDouble() * GRID_UNITS_PER_BEAT.toDouble() / 60.0).toInt()
 }
