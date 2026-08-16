@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.beatwave.android.BeatWaveApplication
 import com.beatwave.android.audio.GridConstants
 import com.beatwave.android.audio.PlaybackEngine
+import com.beatwave.android.audio.WaveformPeaksExtractor
 import com.beatwave.android.data.library.AssetLoopLibrary
 import com.beatwave.android.data.library.AudioImporter
 import com.beatwave.android.data.library.ImportedSampleIndex
@@ -17,8 +18,10 @@ import com.beatwave.android.data.model.Sample
 import com.beatwave.android.data.model.SampleCategory
 import com.beatwave.android.data.model.SampleSource
 import com.beatwave.android.data.model.Track
+import com.beatwave.android.data.storage.AppPreferences
 import com.beatwave.android.data.storage.ProjectRepository
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,7 +47,11 @@ data class TrackBlockRef(val trackSlot: Int, val blockId: String)
 data class PendingImportSample(
     val filePath: String,
     val displayName: String,
-    val durationMs: Long
+    val durationMs: Long,
+    /** Waveform-visualization upgrade: carried through from
+     *  [com.beatwave.android.data.library.AudioImporter.ImportResult.waveformPeaks]
+     *  to the final [Sample] in [ArrangementViewModel.confirmPendingImport]. */
+    val waveformPeaks: List<Float> = emptyList()
 )
 
 /**
@@ -63,7 +70,28 @@ data class PendingRecordingSample(
     val displayName: String,
     val startGridUnit: Int,
     val lengthGridUnits: Int,
-    val durationMs: Long
+    val durationMs: Long,
+    /** Waveform-visualization upgrade: computed in [finalizeRecording] by
+     *  reading the just-written WAV file back through
+     *  [com.beatwave.android.audio.WaveformPeaksExtractor], the same
+     *  approach [com.beatwave.android.data.library.AudioImporter] uses --
+     *  no separate native-side extraction needed, since the whole recorded
+     *  buffer is already flushed to a canonical WAV file by the time this
+     *  is constructed. */
+    val waveformPeaks: List<Float> = emptyList()
+)
+
+/**
+ * A lean projection of [Project] for [ProjectPickerSheet]'s list -- only
+ * what a picker row needs to display and act on, deliberately not the full
+ * [Project] (tracks/loop blocks) the way [ArrangementUiState.project] is,
+ * mirroring [PendingImportSample]/[PendingRecordingSample]'s own
+ * lean-projection-type precedent.
+ */
+data class ProjectSummary(
+    val id: String,
+    val name: String,
+    val modifiedAtEpochMs: Long
 )
 
 /**
@@ -113,7 +141,16 @@ data class ArrangementUiState(
      *  "Export/Share"). One-shot -- consumed via
      *  [ArrangementViewModel.shareFileConsumed] the same way [pendingImport]/
      *  [pendingRecording] are consumed by their own confirm/cancel calls. */
-    val pendingShareFilePath: String? = null
+    val pendingShareFilePath: String? = null,
+    /** True while [ProjectPickerSheet] should be shown (multiple-projects
+     *  upgrade). Toggled via [ArrangementViewModel.openProjectPicker]/
+     *  [ArrangementViewModel.closeProjectPicker]. */
+    val showProjectPicker: Boolean = false,
+    /** Refreshed each time [ArrangementViewModel.openProjectPicker] runs --
+     *  every saved project, most-recently-modified first. Empty until the
+     *  picker has been opened at least once; not kept continuously in sync
+     *  with disk while the picker is closed (nothing needs it then). */
+    val projectSummaries: List<ProjectSummary> = emptyList()
 )
 
 /**
@@ -157,10 +194,19 @@ data class ArrangementUiState(
  * further editing, short enough not to dominate the timeline. Its start
  * position defaults to the next free grid unit after the track's last
  * existing block (or 0 if the track is empty) -- see [defaultStartGridUnit].
+ *
+ * MULTIPLE PROJECTS (post-v1 upgrade): [ProjectRepository] has been
+ * ID-generic (save/load/list/delete) since Phase 1 -- this class was the
+ * only thing hardcoding a single project id. [appPreferences] now records
+ * which project was last opened so relaunching the app reopens it, and
+ * [switchToProject]/[createNewProject]/[renameProject]/[deleteProject]
+ * mirror [rebuildAndPersist]'s existing "update state, push to engine, save"
+ * shape rather than introducing a new pattern.
  */
 class ArrangementViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = ProjectRepository.forContext(application)
+    private val appPreferences = AppPreferences.forContext(application)
     private val assetLoopLibrary = AssetLoopLibrary(application)
 
     /** The app-wide singleton every engine-touching call below delegates
@@ -210,7 +256,14 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         viewModelScope.launch(Dispatchers.Default) {
-            val loadedProject = repository.load(PROJECT_ID)
+            // Multiple projects: reopen whichever project was last active.
+            // appPreferences.lastActiveProjectId is null on a fresh install
+            // AND on any install from before this preference existed --
+            // PROJECT_ID ("current") is the fallback for both, preserving
+            // every existing test's/existing install's assumption that the
+            // first/default project has that exact id.
+            val startProjectId = appPreferences.lastActiveProjectId ?: PROJECT_ID
+            val loadedProject = repository.load(startProjectId)
             // Merge bundled + imported samples into the ONE combined library
             // (design item 6) -- background-dispatched same as the rest of
             // this init block. importedSampleIndex.load() is plain JSON file
@@ -220,13 +273,21 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             val importedSamples = importedSampleIndex.load()
             val samples = (bundledSamples + importedSamples).associateBy { it.id }
             val project = loadedProject ?: Project(
-                id = PROJECT_ID,
+                id = startProjectId,
                 name = "My Project",
                 bpm = DEFAULT_BPM,
                 tracks = (1..MAX_TRACKS).map { slot -> Track(slot = slot) },
                 createdAtEpochMs = System.currentTimeMillis(),
                 modifiedAtEpochMs = System.currentTimeMillis()
             )
+            if (loadedProject == null) {
+                // Persist immediately (not lazily on first edit, as before
+                // multiple projects existed) so a freshly created project
+                // shows up in ProjectPickerSheet's list right away, even
+                // before the user has touched it.
+                repository.save(project)
+            }
+            appPreferences.lastActiveProjectId = startProjectId
 
             val started = playbackEngine.initialize(project, samples)
             pushProjectMetadata(project)
@@ -385,6 +446,154 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         playbackEngine.updateProjectMetadata(project.name, durationFrames)
     }
 
+    // --- Multiple projects (post-v1 upgrade) ---
+    //
+    // ProjectRepository has been fully id-generic (save/load/list/delete)
+    // since Phase 1; everything below is UI/state-management wiring on top
+    // of that existing, already-tested persistence layer -- no repository
+    // changes needed.
+
+    /** Refreshes [ArrangementUiState.projectSummaries] from disk and shows
+     *  [ProjectPickerSheet]. Runs off the main thread (file I/O). */
+    fun openProjectPicker() {
+        viewModelScope.launch(Dispatchers.Default) {
+            val summaries = repository.list()
+                .map { ProjectSummary(it.id, it.name, it.modifiedAtEpochMs) }
+                .sortedByDescending { it.modifiedAtEpochMs }
+            _uiState.update { it.copy(showProjectPicker = true, projectSummaries = summaries) }
+        }
+    }
+
+    fun closeProjectPicker() {
+        _uiState.update { it.copy(showProjectPicker = false) }
+    }
+
+    /** Switches the active project to [id], persisting it as the one to
+     *  reopen next launch. No-op (just closes the picker) if [id] is already
+     *  the active project. Refuses (with a message) to switch while a
+     *  recording is in progress -- switching mid-recording would discard
+     *  audio the user is actively capturing. */
+    fun switchToProject(id: String) {
+        val current = _uiState.value
+        if (id == current.project?.id) {
+            closeProjectPicker()
+            return
+        }
+        if (current.recordingTrackSlot != null) {
+            _uiState.update { it.copy(message = "Stop the current recording before switching projects.") }
+            return
+        }
+        _uiState.update { it.copy(showProjectPicker = false) }
+        viewModelScope.launch(Dispatchers.Default) {
+            // Mirrors stopPlayback's own ordering rationale: finalize any
+            // in-flight recording and stop the transport BEFORE touching the
+            // engine's schedule again, so a switch never interleaves with
+            // recording-buffer/transport state from the project being left.
+            ensureRecordingFinalizing()?.join()
+            playbackEngine.stop()
+
+            val project = repository.load(id) ?: return@launch
+            appPreferences.lastActiveProjectId = id
+            playbackEngine.loadProject(project, _uiState.value.samples)
+            pushProjectMetadata(project)
+            _uiState.update {
+                it.copy(
+                    project = project,
+                    selectedTrackSlot = null,
+                    editingBlock = null
+                )
+            }
+        }
+    }
+
+    /** Creates a brand-new, empty 8-track project named [name], saves it,
+     *  and switches to it immediately. A blank/whitespace-only [name] falls
+     *  back to "New Project" rather than persisting an unreadable empty
+     *  name. */
+    fun createNewProject(name: String) {
+        val trimmed = name.trim()
+        val newProject = Project(
+            id = UUID.randomUUID().toString(),
+            name = trimmed.ifEmpty { "New Project" },
+            bpm = DEFAULT_BPM,
+            tracks = (1..MAX_TRACKS).map { slot -> Track(slot = slot) },
+            createdAtEpochMs = System.currentTimeMillis(),
+            modifiedAtEpochMs = System.currentTimeMillis()
+        )
+        // The save MUST happen-before switchToProject's own internal
+        // repository.load(id) call, or the load can race ahead of the save
+        // landing on disk and silently no-op (repository.load returns null
+        // -> switchToProject's `?: return@launch`) -- a real bug this
+        // exact race caused (caught via MultipleProjectsTest on real
+        // hardware: createNewProject appeared to do nothing). A single
+        // sequential coroutine, save then switch, is what actually
+        // guarantees the ordering; two independent launch{} calls (the
+        // first version of this function) do not, even though the source
+        // reads top-to-bottom.
+        viewModelScope.launch(Dispatchers.Default) {
+            repository.save(newProject)
+            switchToProject(newProject.id)
+        }
+    }
+
+    /** Renames the project with [id] to [newName]. A blank/whitespace-only
+     *  [newName] is rejected with a message rather than silently falling
+     *  back to a placeholder, unlike [createNewProject]'s empty-name
+     *  fallback -- a rename is a deliberate edit to an already-named
+     *  project, so silently substituting a different name would be
+     *  surprising here in a way it isn't for a brand-new project. Updates
+     *  [ArrangementUiState.project] in place if [id] is the active project;
+     *  purely cosmetic, so unlike [switchToProject] this never touches the
+     *  native engine. */
+    fun renameProject(id: String, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) {
+            _uiState.update { it.copy(message = "Project name can't be empty.") }
+            return
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            val project = repository.load(id) ?: return@launch
+            val renamed = project.copy(name = trimmed, modifiedAtEpochMs = System.currentTimeMillis())
+            repository.save(renamed)
+            if (_uiState.value.project?.id == id) {
+                pushProjectMetadata(renamed)
+            }
+            _uiState.update { current ->
+                current.copy(
+                    project = if (current.project?.id == id) renamed else current.project,
+                    projectSummaries = current.projectSummaries.map { summary ->
+                        if (summary.id == id) summary.copy(name = trimmed, modifiedAtEpochMs = renamed.modifiedAtEpochMs) else summary
+                    }
+                )
+            }
+        }
+    }
+
+    /** Deletes the project with [id]. If it was the active project, switches
+     *  to another existing project (most recently modified first) or, if
+     *  none remain, creates a fresh default -- the app must always have a
+     *  current project, the same invariant [init] establishes on first
+     *  launch. */
+    fun deleteProject(id: String) {
+        val wasActive = _uiState.value.project?.id == id
+        viewModelScope.launch(Dispatchers.Default) {
+            repository.delete(id)
+            val remainingSummaries = repository.list()
+                .map { ProjectSummary(it.id, it.name, it.modifiedAtEpochMs) }
+                .sortedByDescending { it.modifiedAtEpochMs }
+            _uiState.update { it.copy(projectSummaries = remainingSummaries) }
+
+            if (wasActive) {
+                val next = remainingSummaries.firstOrNull()
+                if (next != null) {
+                    switchToProject(next.id)
+                } else {
+                    createNewProject("My Project")
+                }
+            }
+        }
+    }
+
     fun messageShown() {
         _uiState.update { it.copy(message = null) }
     }
@@ -508,7 +717,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                             pendingImport = PendingImportSample(
                                 filePath = imported.file.absolutePath,
                                 displayName = imported.displayName,
-                                durationMs = imported.durationMs
+                                durationMs = imported.durationMs,
+                                waveformPeaks = imported.waveformPeaks
                             )
                         )
                     }
@@ -551,7 +761,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 name = pending.displayName,
                 category = category,
                 source = SampleSource.ImportedFile(uri = pending.filePath),
-                durationMs = pending.durationMs
+                durationMs = pending.durationMs,
+                waveformPeaks = pending.waveformPeaks
             )
             importedSampleIndex.add(sample)
             _uiState.update { current ->
@@ -812,6 +1023,17 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         val startGridUnit = GridConstants.startGridUnitForFrame(startFrame, project.bpm, sampleRate)
         val lengthGridUnits = GridConstants.lengthGridUnitsForFrameCount(framesWritten, project.bpm, sampleRate)
 
+        // Waveform-visualization upgrade: outputFile is already a fully
+        // flushed, canonical WAV file at this point (stopRecording wrote it
+        // via the native WavWriter before returning) -- same "read the file
+        // back through WaveformPeaksExtractor" approach AudioImporter uses,
+        // rather than a separate native-side extraction path.
+        val waveformPeaks = try {
+            WaveformPeaksExtractor.extract(outputFile.readBytes())
+        } catch (e: IOException) {
+            emptyList()
+        }
+
         _uiState.update {
             it.copy(
                 pendingRecording = PendingRecordingSample(
@@ -820,7 +1042,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                     displayName = "Recording ${recordingTimestampLabel()}",
                     startGridUnit = startGridUnit,
                     lengthGridUnits = lengthGridUnits,
-                    durationMs = durationMs
+                    durationMs = durationMs,
+                    waveformPeaks = waveformPeaks
                 )
             )
         }
@@ -862,7 +1085,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 name = pending.displayName,
                 category = category,
                 source = SampleSource.ImportedFile(uri = pending.filePath),
-                durationMs = pending.durationMs
+                durationMs = pending.durationMs,
+                waveformPeaks = pending.waveformPeaks
             )
             importedSampleIndex.add(sample)
 

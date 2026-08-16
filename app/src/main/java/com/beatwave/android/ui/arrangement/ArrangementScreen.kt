@@ -213,7 +213,20 @@ fun ArrangementScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("BeatWave") },
+                // Multiple projects: the current project's name doubles as
+                // the picker's entry point (tap to switch/rename/delete/
+                // create) -- avoids cramming a second button into an already
+                // tight `actions` row (Export) on this project's small-screen
+                // test device, and matches a common "tap the doc title to
+                // switch documents" pattern.
+                title = {
+                    Text(
+                        project?.name ?: "BeatWave",
+                        modifier = Modifier
+                            .clickable { viewModel.openProjectPicker() }
+                            .testTag("project_picker_open_button")
+                    )
+                },
                 actions = {
                     if (uiState.isExporting) {
                         CircularProgressIndicator(
@@ -302,6 +315,18 @@ fun ArrangementScreen(
             onPreview = viewModel::previewSample,
             onAdd = { sample -> viewModel.addLoopToSelectedTrack(sample) },
             onImport = { uri -> viewModel.importAudioFromUri(uri) }
+        )
+    }
+
+    if (uiState.showProjectPicker) {
+        ProjectPickerSheet(
+            projects = uiState.projectSummaries,
+            activeProjectId = project?.id,
+            onDismiss = viewModel::closeProjectPicker,
+            onOpen = viewModel::switchToProject,
+            onCreate = viewModel::createNewProject,
+            onRename = viewModel::renameProject,
+            onDelete = viewModel::deleteProject
         )
     }
 
@@ -640,6 +665,24 @@ private fun BlockView(
             .clickable { onTap() }
             .padding(4.dp)
     ) {
+        // Waveform-visualization upgrade: the block's TRIMMED region only
+        // (what's actually audible), not the full sample -- unlike
+        // LoopBlockEditorDialog's full-waveform-plus-highlight view.
+        // Deliberately a simple stretch-to-fill-the-block-width rendering,
+        // not tiled per loop repeat (a block can repeat its trimmed content
+        // several times to fill its length): shows real waveform SHAPE at a
+        // glance without the added complexity of computing exact
+        // repeat-tile boundaries against grid/pitch math -- a v1 scope cut,
+        // not an oversight. No-ops for a sample with no peaks yet (older
+        // imports/recordings predating this upgrade) -- see WaveformView's
+        // own doc comment.
+        if (sample != null && sample.waveformPeaks.isNotEmpty()) {
+            WaveformView(
+                peaks = trimmedPeaksForBlock(sample, block),
+                modifier = Modifier.matchParentSize(),
+                color = Color.White.copy(alpha = 0.55f)
+            )
+        }
         Text(
             text = sample?.name ?: "Unknown",
             style = MaterialTheme.typography.labelSmall,
@@ -648,4 +691,21 @@ private fun BlockView(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+/** The sub-range of [sample]'s full waveform peaks corresponding to
+ *  [block]'s own trim window ([LoopBlock.trimStartMs]/[LoopBlock.trimEndMs]
+ *  as a fraction of [Sample.durationMs]) -- what [BlockView] actually draws,
+ *  since that's the region genuinely audible for this block. Falls back to
+ *  the full peaks list if the computed sub-range is degenerate (e.g. a trim
+ *  window narrower than one peak bucket). */
+private fun trimmedPeaksForBlock(sample: Sample, block: LoopBlock): List<Float> {
+    val peaks = sample.waveformPeaks
+    if (peaks.isEmpty()) return peaks
+    val maxDurationMs = sample.durationMs.toFloat().coerceAtLeast(1f)
+    val trimStartFraction = (block.trimStartMs / maxDurationMs).coerceIn(0f, 1f)
+    val trimEndFraction = ((block.trimEndMs?.toFloat() ?: sample.durationMs.toFloat()) / maxDurationMs).coerceIn(0f, 1f)
+    val startIdx = (trimStartFraction * peaks.size).toInt().coerceIn(0, peaks.size)
+    val endIdx = (trimEndFraction * peaks.size).toInt().coerceIn(startIdx, peaks.size)
+    return if (endIdx > startIdx) peaks.subList(startIdx, endIdx) else peaks
 }

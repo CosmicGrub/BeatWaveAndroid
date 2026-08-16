@@ -6,6 +6,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.beatwave.android.audio.WaveformPeaksExtractor
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -32,13 +33,15 @@ import kotlinx.coroutines.withContext
 class AudioImporter(private val context: Context) {
 
     /** Successful import: the WAV file written to app-private storage, the
-     *  original file's display name (best-effort), and its real decoded
+     *  original file's display name (best-effort), its real decoded
      *  duration in milliseconds (derived from decoded frame count, never
-     *  estimated). */
+     *  estimated), and its [com.beatwave.android.data.model.Sample.waveformPeaks]
+     *  (waveform-visualization upgrade). */
     data class ImportResult(
         val file: File,
         val displayName: String,
-        val durationMs: Long
+        val durationMs: Long,
+        val waveformPeaks: List<Float> = emptyList()
     )
 
     /** Every failure mode [import] can surface, all user-presentable via
@@ -74,7 +77,21 @@ class AudioImporter(private val context: Context) {
             } else {
                 0L
             }
-            Result.success(ImportResult(file = file, displayName = displayName, durationMs = durationMs))
+            // Waveform-visualization upgrade: read the file just written
+            // back rather than re-deriving peaks from `decoded.pcm` directly
+            // -- reuses WaveformPeaksExtractor's ONE canonical-WAV-bytes
+            // entry point (the same one AssetLoopLibrary/recording use)
+            // instead of a second, raw-PCM-shaped code path. The extra read
+            // is a small, one-time cost against a file this same function
+            // just wrote, not a hot path.
+            val waveformPeaks = try {
+                WaveformPeaksExtractor.extract(file.readBytes())
+            } catch (e: IOException) {
+                emptyList()
+            }
+            Result.success(
+                ImportResult(file = file, displayName = displayName, durationMs = durationMs, waveformPeaks = waveformPeaks)
+            )
         } catch (e: ImportError) {
             Result.failure(e)
         } catch (e: Exception) {

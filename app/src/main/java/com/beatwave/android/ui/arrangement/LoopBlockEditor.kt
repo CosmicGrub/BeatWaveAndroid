@@ -2,6 +2,7 @@ package com.beatwave.android.ui.arrangement
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -70,6 +71,21 @@ fun LoopBlockEditorDialog(
                     "Trim: ${trimStart.toInt()}ms - ${trimEnd.toInt()}ms",
                     style = MaterialTheme.typography.labelMedium
                 )
+                // Waveform-visualization upgrade: the full sample's
+                // waveform, with the current trim selection highlighted --
+                // lets the user see what they're about to cut before
+                // dragging the RangeSlider below, rather than trimming
+                // blind by numbers alone. No-ops (draws nothing) for a
+                // sample with no peaks yet -- see WaveformView's own doc
+                // comment.
+                WaveformView(
+                    peaks = sample.waveformPeaks,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    highlightRange = (trimStart / maxDurationMs)..(trimEnd / maxDurationMs),
+                    highlightColor = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(4.dp))
                 RangeSlider(
                     value = trimStart..trimEnd,
                     onValueChange = { range ->
