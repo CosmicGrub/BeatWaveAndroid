@@ -249,6 +249,24 @@ Java_com_beatwave_android_AudioEngineBridge_nativeTestGetLoopLocalFrame(
     return handleToEngine(handle)->testGetLoopLocalFrame(trackSlot, blockIndex);
 }
 
+// --- Post-v1 audit D1 (SampleBank cache eviction) test natives ---
+
+JNIEXPORT void JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeTestSetSampleBankMaxCacheBytes(
+        JNIEnv *, jobject, jlong handle, jlong maxCacheBytes) {
+    handleToEngine(handle)->testSetSampleBankMaxCacheBytes(maxCacheBytes);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeTestGetSampleBankCacheBytes(JNIEnv *, jobject, jlong handle) {
+    return handleToEngine(handle)->testGetSampleBankCacheBytes();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeTestGetSampleBankCacheEntryCount(JNIEnv *, jobject, jlong handle) {
+    return handleToEngine(handle)->testGetSampleBankCacheEntryCount();
+}
+
 // --- Phase 5, mandate 8: offline/test-only recording natives ---
 // Same handle-based offline engine as the natives above; lets an
 // instrumented test deterministically simulate "start recording at

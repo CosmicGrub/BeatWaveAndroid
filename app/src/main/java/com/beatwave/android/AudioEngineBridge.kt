@@ -204,6 +204,22 @@ object AudioEngineBridge {
      *  -1 if it doesn't resolve / isn't currently active. */
     external fun nativeTestGetLoopLocalFrame(handle: Long, trackSlot: Int, blockIndex: Int): Long
 
+    // -- Post-v1 audit D1 (SampleBank cache eviction) diagnostics ---------
+    // Let an instrumented test force real LRU eviction deterministically
+    // with only a handful of small bundled loop assets, and read back the
+    // cache's own bookkeeping to confirm it stayed bounded -- see
+    // SampleBank.h's class doc comment and kDefaultMaxCacheBytes.
+
+    /** Overrides [handle]'s sample cache eviction budget. Test-only --
+     *  production code always uses SampleBank::kDefaultMaxCacheBytes. */
+    external fun nativeTestSetSampleBankMaxCacheBytes(handle: Long, maxCacheBytes: Long)
+
+    /** Total bytes currently held by [handle]'s sample cache. */
+    external fun nativeTestGetSampleBankCacheBytes(handle: Long): Long
+
+    /** Number of distinct sample assets currently cached on [handle]. */
+    external fun nativeTestGetSampleBankCacheEntryCount(handle: Long): Int
+
     // -- Offline recording diagnostics (Phase 5, mandate 8) --------------
     // Mirror the live startRecording/stopRecording/isRecording/
     // getRecordingStartFrame/getRecordedFrameCount natives above, but

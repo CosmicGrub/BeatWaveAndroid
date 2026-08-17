@@ -349,6 +349,18 @@ int64_t AudioEngine::testGetLoopContentLengthFrames(int32_t trackSlot, int32_t b
     return block ? block->loopContentLengthFrames : -1;
 }
 
+void AudioEngine::testSetSampleBankMaxCacheBytes(int64_t maxCacheBytes) {
+    mSampleBank.setMaxCacheBytes(static_cast<size_t>(maxCacheBytes));
+}
+
+int64_t AudioEngine::testGetSampleBankCacheBytes() const {
+    return static_cast<int64_t>(mSampleBank.currentCacheBytes());
+}
+
+int32_t AudioEngine::testGetSampleBankCacheEntryCount() const {
+    return static_cast<int32_t>(mSampleBank.entryCount());
+}
+
 int64_t AudioEngine::testGetLoopLocalFrame(int32_t trackSlot, int32_t blockIndex) const {
     const ResolvedLoopBlock *block = findBlock(trackSlot, blockIndex);
     if (!block) {

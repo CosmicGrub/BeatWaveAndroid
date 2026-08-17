@@ -25,7 +25,8 @@ std::shared_ptr<const SampleBuffer> SampleBank::getOrLoad(
     // per-loop-block properties applied at mix time, not part of this key.
     auto it = mCache.find(assetPath);
     if (it != mCache.end()) {
-        return it->second;
+        it->second.lastAccessTick = ++mAccessCounter; // D1: mark most-recently-used
+        return it->second.buffer;
     }
 
     DecodedPcm decoded;
@@ -46,13 +47,52 @@ std::shared_ptr<const SampleBuffer> SampleBank::getOrLoad(
         return nullptr;
     }
 
-    mCache.emplace(assetPath, buffer);
+    CacheEntry entry;
+    const size_t byteSize = buffer->interleaved.size() * sizeof(float);
+    entry.buffer = buffer;
+    entry.byteSize = byteSize;
+    entry.lastAccessTick = ++mAccessCounter;
+    mCache.emplace(assetPath, std::move(entry));
+    mCurrentCacheBytes += byteSize;
+
+    evictIfOverBudgetLocked();
+
     return buffer;
+}
+
+void SampleBank::evictIfOverBudgetLocked() {
+    while (mCurrentCacheBytes > mMaxCacheBytes && mCache.size() > 1) {
+        auto lruIt = mCache.begin();
+        for (auto it = mCache.begin(); it != mCache.end(); ++it) {
+            if (it->second.lastAccessTick < lruIt->second.lastAccessTick) {
+                lruIt = it;
+            }
+        }
+        mCurrentCacheBytes -= lruIt->second.byteSize;
+        mCache.erase(lruIt);
+    }
 }
 
 void SampleBank::clear() {
     std::lock_guard<std::mutex> lock(mMutex);
     mCache.clear();
+    mCurrentCacheBytes = 0;
+}
+
+void SampleBank::setMaxCacheBytes(size_t maxCacheBytes) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mMaxCacheBytes = maxCacheBytes;
+    evictIfOverBudgetLocked();
+}
+
+size_t SampleBank::currentCacheBytes() const {
+    std::lock_guard<std::mutex> lock(mMutex);
+    return mCurrentCacheBytes;
+}
+
+size_t SampleBank::entryCount() const {
+    std::lock_guard<std::mutex> lock(mMutex);
+    return mCache.size();
 }
 
 } // namespace beatwave

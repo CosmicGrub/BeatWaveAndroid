@@ -209,6 +209,21 @@ public:
      *  resolve or isn't currently active. */
     int64_t testGetLoopLocalFrame(int32_t trackSlot, int32_t blockIndex) const;
 
+    /** Post-v1 audit D1 (SampleBank cache eviction): overrides the sample
+     *  cache's eviction budget so an instrumented test can force real LRU
+     *  eviction deterministically with only a handful of small bundled loop
+     *  assets, instead of needing to load hundreds of megabytes of real
+     *  audio to cross the production default (see SampleBank::
+     *  kDefaultMaxCacheBytes). Production code never calls this.
+     *  Off-audio-thread only. */
+    void testSetSampleBankMaxCacheBytes(int64_t maxCacheBytes);
+
+    /** Total bytes currently held by the sample cache. Off-audio-thread only. */
+    int64_t testGetSampleBankCacheBytes() const;
+
+    /** Number of distinct sample assets currently cached. Off-audio-thread only. */
+    int32_t testGetSampleBankCacheEntryCount() const;
+
     oboe::DataCallbackResult onAudioReady(
             oboe::AudioStream *audioStream,
             void *audioData,
