@@ -258,6 +258,13 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     private val audioImporter = AudioImporter(application)
     private val importedSampleIndex = ImportedSampleIndex.forContext(application)
 
+    /** Post-v1 audit A1 (import size/DoS hardening): the app-wide,
+     *  self-expiring lease [importAudioFromUri] acquires/releases -- see
+     *  [BeatWaveApplication.importLeaseClaimedAtMs]'s own doc comment for
+     *  why this needs to be app-wide (not a field on this class) AND
+     *  self-expiring (not a plain boolean). */
+    private val importLeaseClaimedAtMs = (application as BeatWaveApplication).importLeaseClaimedAtMs
+
     private val _uiState = MutableStateFlow(ArrangementUiState())
     val uiState: StateFlow<ArrangementUiState> = _uiState.asStateFlow()
 
@@ -736,26 +743,83 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
      *  decoded file as [ArrangementUiState.pendingImport] so the UI can show
      *  [CategoryPickerDialog]; on failure, surfaces the error via the
      *  existing [ArrangementUiState.message] Snackbar path instead of
-     *  crashing. */
+     *  crashing.
+     *
+     *  Post-v1 audit A1 (import size/DoS hardening): guarded by
+     *  [importLeaseClaimedAtMs] so at most one import decodes at a time,
+     *  app-wide -- a second call (from this instance OR a separate
+     *  Activity/ViewModel instance spun up by another ACTION_SEND share
+     *  intent, see [importLeaseClaimedAtMs]'s own doc comment) is rejected
+     *  immediately rather than running concurrently, since [AudioImporter]'s
+     *  own per-file byte cap doesn't bound how many imports can be decoding
+     *  -- and holding their own full-size buffers -- at once. The lease
+     *  self-expires after [IMPORT_LEASE_MAX_MS] (found during this audit's
+     *  adversarial-review pass: a genuinely stuck decode can't be relied on
+     *  to ever reach the `finally` block below, since the underlying
+     *  MediaExtractor/MediaCodec calls aren't reliably interruptible -- a
+     *  plain non-expiring guard would then wedge every future import,
+     *  app-wide, until process restart). */
     fun importAudioFromUri(uri: Uri) {
+        val claimedAt = tryClaimImportLease()
+        if (claimedAt == null) {
+            _uiState.update { it.copy(message = "Another import is already in progress -- please wait for it to finish.") }
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            audioImporter.import(uri).fold(
-                onSuccess = { imported ->
-                    _uiState.update {
-                        it.copy(
-                            pendingImport = PendingImportSample(
-                                filePath = imported.file.absolutePath,
-                                displayName = imported.displayName,
-                                durationMs = imported.durationMs,
-                                waveformPeaks = imported.waveformPeaks
+            try {
+                audioImporter.import(uri).fold(
+                    onSuccess = { imported ->
+                        _uiState.update {
+                            it.copy(
+                                pendingImport = PendingImportSample(
+                                    filePath = imported.file.absolutePath,
+                                    displayName = imported.displayName,
+                                    durationMs = imported.durationMs,
+                                    waveformPeaks = imported.waveformPeaks
+                                )
                             )
-                        )
+                        }
+                    },
+                    onFailure = { error ->
+                        _uiState.update { it.copy(message = error.message ?: "Failed to import audio file.") }
                     }
-                },
-                onFailure = { error ->
-                    _uiState.update { it.copy(message = error.message ?: "Failed to import audio file.") }
-                }
-            )
+                )
+            } finally {
+                // Only clear if we still own the lease -- if it already
+                // expired and was reclaimed by a later call (the scenario
+                // this self-expiring design exists for), this must NOT
+                // clear that newer call's claim out from under it.
+                importLeaseClaimedAtMs.compareAndSet(claimedAt, 0L)
+            }
+        }
+    }
+
+    /** Returns the epoch-ms timestamp this call claimed [importLeaseClaimedAtMs]
+     *  at, or null if it's genuinely still held (not yet expired) by
+     *  another in-flight import. A CAS retry loop, not a single
+     *  compareAndSet -- needed because a naive single-attempt version
+     *  (found and fixed during this audit's own adversarial-review pass)
+     *  could spuriously report "still in progress" if the actual holder
+     *  released it (transitioning to 0L) in the brief window between
+     *  reading a stale/expired value here and attempting to reclaim it: a
+     *  compareAndSet expecting that STALE value would then fail against the
+     *  now-different actual (0L) value, even though the lease was, by
+     *  then, genuinely free. Re-reading the fresh value on each CAS failure
+     *  (rather than trusting the first read) avoids that. Realistic
+     *  contention here is at most a handful of Activity instances from a
+     *  burst of share intents, so this loop terminates quickly in
+     *  practice -- not an unbounded busy-wait risk. */
+    private fun tryClaimImportLease(): Long? {
+        while (true) {
+            val current = importLeaseClaimedAtMs.get()
+            val now = System.currentTimeMillis()
+            val available = current == 0L || now - current > IMPORT_LEASE_MAX_MS
+            if (!available) return null
+            if (importLeaseClaimedAtMs.compareAndSet(current, now)) return now
+            // Lost a race against another thread's concurrent claim/release
+            // between the read above and this attempt -- loop and
+            // re-evaluate against the fresh value rather than assuming our
+            // now-stale read is still accurate.
         }
     }
 
@@ -1253,6 +1317,18 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         private const val PROJECT_ID = "current"
         private const val DEFAULT_BPM = 90
         private const val MAX_TRACKS = 8
+
+        /** Post-v1 audit A1 (import size/DoS hardening): how long
+         *  [importLeaseClaimedAtMs] can be held before a later call is
+         *  allowed to reclaim it regardless of whether the original holder
+         *  ever released it. Deliberately well above AudioImporter's own
+         *  `MAX_DECODE_WALL_CLOCK_MS` (60s) -- generous enough that the
+         *  decode loop's own cooperative deadline check (the mechanism that
+         *  reliably bounds a NORMAL slow-but-not-hung decode) gets every
+         *  chance to fire and release this lease on its own first; this
+         *  timeout only matters as the backstop for the rarer case where
+         *  the underlying native call doesn't cooperate at all. */
+        private const val IMPORT_LEASE_MAX_MS = 90_000L
 
         /** Sibling of [com.beatwave.android.data.library.AudioImporter]'s
          *  `imported_samples` directory -- see design item 10. */

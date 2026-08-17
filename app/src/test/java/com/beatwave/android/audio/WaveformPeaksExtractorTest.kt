@@ -105,6 +105,104 @@ class WaveformPeaksExtractorTest {
         assertEquals(emptyList<Float>(), WaveformPeaksExtractor.extract(wav, peakCount = 0))
     }
 
+    // --- extractFromInterleavedPcm16 (post-v1 audit A1: import size/DoS
+    // hardening) -- AudioImporter's own entry point, operating directly on
+    // raw already-decoded 16-bit PCM rather than WAV-file bytes. ---
+
+    @Test
+    fun extractFromInterleavedPcm16_simpleMono16Bit_producesExpectedPeakCountAndValues() {
+        // Same values/expectations as extract_simpleMono16Bit... above --
+        // this entry point must behave identically for the same underlying
+        // samples, just fed raw PCM instead of a wrapping WAV file.
+        val samples = intArrayOf(0, 16384, 32767, 8192)
+        val pcm = buildRawPcm16(samples)
+
+        val peaks = WaveformPeaksExtractor.extractFromInterleavedPcm16(pcm, channelCount = 1, peakCount = 4)
+
+        assertEquals(4, peaks.size)
+        assertEquals(0.0f, peaks[0], TOLERANCE)
+        assertEquals(0.5f, peaks[1], TOLERANCE)
+        assertTrue("expected peak[2] close to 1.0, got ${peaks[2]}", peaks[2] > 0.99f)
+        assertEquals(0.25f, peaks[3], TOLERANCE)
+    }
+
+    @Test
+    fun extractFromInterleavedPcm16_stereoWithLoudSampleOnOneChannelOnly_stillCapturesIt() {
+        val interleaved = intArrayOf(32767, 0, 0, 32767)
+        val pcm = buildRawPcm16(interleaved)
+
+        val peaks = WaveformPeaksExtractor.extractFromInterleavedPcm16(pcm, channelCount = 2, peakCount = 2)
+
+        assertEquals(2, peaks.size)
+        assertTrue("expected peak[0] to reflect the loud LEFT channel, got ${peaks[0]}", peaks[0] > 0.99f)
+        assertTrue("expected peak[1] to reflect the loud RIGHT channel, got ${peaks[1]}", peaks[1] > 0.99f)
+    }
+
+    @Test
+    fun extractFromInterleavedPcm16_matchesExtractForTheSameUnderlyingAudio() {
+        // The exact regression this entry point exists to avoid introducing:
+        // AudioImporter used to call extract(wavBytes) on a canonical
+        // 44-byte-header WAV; it now calls extractFromInterleavedPcm16 on
+        // the raw PCM directly. For the SAME underlying samples, both must
+        // produce IDENTICAL peaks -- this builds one canonical WAV, derives
+        // its raw PCM (everything past the fixed 44-byte header, matching
+        // AudioImporter.writeWavFile's exact layout), and compares both
+        // entry points' output directly rather than just individually
+        // asserting expected values.
+        val samples = intArrayOf(-32768, -1000, 0, 1000, 16384, 32767, -20000, 500)
+        val channelCount = 2
+        val wav = buildWav(channelCount = channelCount, sampleRateHz = 44100, bitsPerSample = 16, samples16 = samples)
+        val rawPcm = wav.copyOfRange(44, wav.size)
+
+        val viaWav = WaveformPeaksExtractor.extract(wav, peakCount = 6)
+        val viaRawPcm = WaveformPeaksExtractor.extractFromInterleavedPcm16(rawPcm, channelCount, peakCount = 6)
+
+        assertEquals(viaWav.size, viaRawPcm.size)
+        viaWav.indices.forEach { i ->
+            assertEquals("peak[$i] should match between extract() and extractFromInterleavedPcm16()", viaWav[i], viaRawPcm[i], TOLERANCE)
+        }
+    }
+
+    @Test
+    fun extractFromInterleavedPcm16_zeroChannelCount_returnsEmptyList() {
+        val pcm = buildRawPcm16(intArrayOf(100, 200))
+        assertEquals(emptyList<Float>(), WaveformPeaksExtractor.extractFromInterleavedPcm16(pcm, channelCount = 0))
+    }
+
+    @Test
+    fun extractFromInterleavedPcm16_zeroPeakCount_returnsEmptyList() {
+        val pcm = buildRawPcm16(intArrayOf(100))
+        assertEquals(emptyList<Float>(), WaveformPeaksExtractor.extractFromInterleavedPcm16(pcm, channelCount = 1, peakCount = 0))
+    }
+
+    @Test
+    fun extractFromInterleavedPcm16_emptyPcm_returnsAllZeroPeaksWithoutCrashing() {
+        val peaks = WaveformPeaksExtractor.extractFromInterleavedPcm16(ByteArray(0), channelCount = 1, peakCount = 5)
+        assertEquals(List(5) { 0f }, peaks)
+    }
+
+    @Test
+    fun extractFromInterleavedPcm16_audioShorterThanPeakCount_returnsFullPeakCountWithoutCrashing() {
+        val pcm = buildRawPcm16(intArrayOf(32767)) // a single frame
+        val peaks = WaveformPeaksExtractor.extractFromInterleavedPcm16(pcm, channelCount = 1, peakCount = 50)
+        assertEquals(50, peaks.size)
+        assertTrue("expected every bucket to fall back to the single available frame", peaks.all { it > 0.99f })
+    }
+
+    /** Raw interleaved 16-bit PCM bytes for [samples16] -- no WAV wrapper.
+     *  Exactly the shape [WaveformPeaksExtractor.extractFromInterleavedPcm16]
+     *  consumes, and exactly what [buildWav]'s own data chunk contains
+     *  (extracted out to a shared helper so both stay byte-for-byte
+     *  consistent). */
+    private fun buildRawPcm16(samples16: IntArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        for (s in samples16) {
+            out.write(s and 0xFF)
+            out.write((s shr 8) and 0xFF)
+        }
+        return out.toByteArray()
+    }
+
     /** Hand-builds a canonical (optionally with one extra chunk inserted
      *  between "fmt " and "data") 16-bit PCM RIFF/WAVE file from raw
      *  interleaved sample values, mirroring WavWriter.cpp's own byte layout
@@ -120,12 +218,7 @@ class WaveformPeaksExtractorTest {
         val bytesPerSample = bitsPerSample / 8
         val blockAlign = channelCount * bytesPerSample
         val byteRate = sampleRateHz * blockAlign
-        val dataBytes = ByteArrayOutputStream()
-        for (s in samples16) {
-            dataBytes.write(s and 0xFF)
-            dataBytes.write((s shr 8) and 0xFF)
-        }
-        val data = dataBytes.toByteArray()
+        val data = buildRawPcm16(samples16)
 
         val extraChunkTotalSize = if (extraChunkId != null) {
             8 + extraChunkBytes.size + (extraChunkBytes.size % 2)

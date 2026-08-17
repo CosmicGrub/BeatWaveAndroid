@@ -47,6 +47,53 @@ object WaveformPeaksExtractor {
         return bucketPeaks(decoded, peakCount)
     }
 
+    /**
+     * Post-v1 audits/upgrades backlog item A1 (import size/DoS hardening):
+     * a second entry point for callers that already hold raw, already-
+     * decoded 16-bit interleaved PCM in memory -- [com.beatwave.android.data.library.AudioImporter]
+     * specifically, whose `decodeToPcm` output IS this exact shape before it
+     * is ever written to a WAV file. Skips [extract]'s WAV-header/chunk-
+     * scanning step entirely, going straight from raw PCM bytes to peaks.
+     *
+     * This exists to remove a REDUNDANT full-size allocation from
+     * AudioImporter's import path: without it, computing peaks required
+     * re-reading the just-written WAV file's bytes back off disk (a second
+     * full-size copy of data the caller already had in memory), stacked on
+     * top of the transient copies [maxDecodedPcmBytes]-style caps already
+     * have to account for. Not a replacement for [extract] -- callers that
+     * only have WAV-FILE bytes (bundled assets, on-disk recordings) still
+     * need the generic chunk-scanning parser, since THEIR files may carry
+     * extra chunks/an extended fmt chunk this shortcut deliberately doesn't
+     * handle (this function assumes exactly the canonical, header-free,
+     * always-16-bit shape AudioImporter's own decode output guarantees, not
+     * an arbitrary real-world WAV file).
+     *
+     * Same "never throws, degrade gracefully" contract as [extract]: a
+     * [channelCount] that doesn't evenly divide [pcm], or is non-positive,
+     * degrades to an all-zero/empty result rather than throwing.
+     */
+    fun extractFromInterleavedPcm16(
+        pcm: ByteArray,
+        channelCount: Int,
+        peakCount: Int = DEFAULT_PEAK_COUNT
+    ): List<Float> {
+        if (peakCount <= 0 || channelCount <= 0) return emptyList()
+        val bytesPerSample = 2 // AudioImporter's decodeToPcm always produces 16-bit PCM
+        val frameSizeBytes = bytesPerSample * channelCount
+        val numFrames = pcm.size / frameSizeBytes
+        if (numFrames <= 0) return List(peakCount) { 0f }
+
+        val interleaved = FloatArray(numFrames * channelCount)
+        for (frame in 0 until numFrames) {
+            for (ch in 0 until channelCount) {
+                val sampleOffset = frame * frameSizeBytes + ch * bytesPerSample
+                val raw = readSampleAsInt(pcm, sampleOffset, bytesPerSample)
+                interleaved[frame * channelCount + ch] = normalizeSample(raw, bytesPerSample)
+            }
+        }
+        return bucketPeaks(DecodedPcm(interleaved, channelCount), peakCount)
+    }
+
     private class DecodedPcm(val interleaved: FloatArray, val channelCount: Int)
 
     /** Mirrors WavDecoder.cpp's decodeBytesToPcm exactly -- see this

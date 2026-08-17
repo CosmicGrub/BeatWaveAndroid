@@ -68,6 +68,15 @@ class AudioImporterErrorTest {
     }
 
     @Test
+    fun tooLarge_hasUserPresentableMessageAndNoCause() {
+        // Post-v1 audit A1 (import size/DoS hardening).
+        val error = AudioImporter.ImportError.TooLarge()
+
+        assertEquals("The selected file is too large to import. Try a shorter clip.", error.message)
+        assertNull(error.cause)
+    }
+
+    @Test
     fun everyImportError_hasANonBlankUserPresentableMessage() {
         // ArrangementViewModel's error-surfacing code reads `.message`
         // straight off whichever variant `import()` returns -- every
@@ -77,7 +86,8 @@ class AudioImporterErrorTest {
         val errors: List<AudioImporter.ImportError> = listOf(
             AudioImporter.ImportError.NoAudioTrack(),
             AudioImporter.ImportError.DecodeFailed(),
-            AudioImporter.ImportError.IoFailure()
+            AudioImporter.ImportError.IoFailure(),
+            AudioImporter.ImportError.TooLarge()
         )
 
         errors.forEach { error ->
