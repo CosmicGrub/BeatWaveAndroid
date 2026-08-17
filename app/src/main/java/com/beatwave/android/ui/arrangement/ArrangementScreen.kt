@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -62,6 +63,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -73,6 +82,7 @@ import com.beatwave.android.data.model.LoopBlock
 import com.beatwave.android.data.model.Sample
 import com.beatwave.android.data.model.Track
 import java.io.File
+import kotlin.math.roundToInt
 
 private val HEADER_WIDTH: Dp = 84.dp
 private val TRACK_ROW_HEIGHT: Dp = 72.dp
@@ -241,8 +251,20 @@ fun ArrangementScreen(
                 title = {
                     Text(
                         project?.name ?: "BeatWave",
+                        // Post-v1 audit A4 (accessibility): plain clickable
+                        // Text gets a click action for free, but with no
+                        // role/label a screen reader has no way to discover
+                        // this is a button, let alone what it does --
+                        // contentDescription overrides the bare project name
+                        // with an explanation of the action too.
                         modifier = Modifier
-                            .clickable { viewModel.openProjectPicker() }
+                            .clickable(onClickLabel = "Switch project", role = Role.Button) {
+                                viewModel.openProjectPicker()
+                            }
+                            .semantics {
+                                contentDescription =
+                                    "Project: ${project?.name ?: "BeatWave"}. Double tap to switch, rename, or delete projects."
+                            }
                             .testTag("project_picker_open_button")
                     )
                 },
@@ -255,13 +277,22 @@ fun ArrangementScreen(
                     // message the same way).
                     TextButton(
                         onClick = viewModel::openCrashLogs,
-                        modifier = Modifier.testTag("crash_logs_button")
+                        modifier = Modifier
+                            .semantics { contentDescription = "View crash logs" }
+                            .testTag("crash_logs_button")
                     ) {
                         Text("Logs")
                     }
                     if (uiState.isExporting) {
+                        // Post-v1 audit A4: without this, the Export button
+                        // simply vanishes (replaced by a bare spinner) with
+                        // no announcement -- a screen reader user gets no
+                        // confirmation an export even started.
                         CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp).padding(horizontal = 16.dp),
+                            modifier = Modifier
+                                .size(24.dp)
+                                .padding(horizontal = 16.dp)
+                                .semantics { contentDescription = "Exporting project" },
                             strokeWidth = 2.dp
                         )
                     } else {
@@ -290,7 +321,7 @@ fun ArrangementScreen(
     ) { padding ->
         if (project == null) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(Modifier.semantics { contentDescription = "Loading project" })
             }
         } else {
             val maxBlockEnd = project.tracks.flatMap { it.loopBlocks }
@@ -436,19 +467,49 @@ private fun PlaybackControlBar(
             Button(
                 onClick = onTogglePlayPause,
                 enabled = !isRecording,
-                modifier = Modifier.testTag("play_pause_button")
+                // Post-v1 audit A4: Compose already announces the disabled
+                // state itself, but not WHY -- a screen reader user can't
+                // see the pulsing record dot elsewhere on screen that
+                // explains it visually.
+                modifier = Modifier
+                    .then(
+                        if (isRecording) {
+                            Modifier.semantics { stateDescription = "Disabled while recording" }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .testTag("play_pause_button")
             ) {
                 Text(if (isPlaying) "Pause" else "Play")
             }
             Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = onStop, modifier = Modifier.testTag("stop_button")) {
+            OutlinedButton(
+                onClick = onStop,
+                // Post-v1 audit A4: this button also finalizes an
+                // in-progress recording (see the class doc comment above) --
+                // a distinct, higher-stakes action than a plain playback
+                // stop, worth calling out explicitly.
+                modifier = Modifier
+                    .semantics { contentDescription = if (isRecording) "Stop and finish recording" else "Stop" }
+                    .testTag("stop_button")
+            ) {
                 Text("Stop")
             }
             Spacer(Modifier.width(12.dp))
             Text(
                 text = formatPosition(currentFrame, sampleRate),
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.testTag("position_text")
+                // Post-v1 audit A4: deliberately just a contentDescription,
+                // NOT a liveRegion -- this value updates continuously during
+                // playback, and an automatic live-region announcement on
+                // every tick would be a disruptive, unstoppable stream of
+                // TalkBack speech. On-demand reading (swipe-to-focus) is the
+                // right interaction model for a continuously-changing value
+                // like this.
+                modifier = Modifier
+                    .semantics { contentDescription = "Playback position " + formatPosition(currentFrame, sampleRate) }
+                    .testTag("position_text")
             )
             Spacer(Modifier.weight(1f))
             Button(onClick = onOpenLibrary, modifier = Modifier.testTag("open_library_button")) {
@@ -493,6 +554,36 @@ private fun TimelineRuler(
                             onSeekGridUnit(gridUnit)
                         }
                     }
+                    // Post-v1 audit A4 (accessibility): a raw pointerInput/
+                    // detectTapGestures never touches the semantics tree --
+                    // unlike Modifier.clickable, it registers no
+                    // accessibility click action at all, so before this the
+                    // ruler was completely un-focusable and un-operable by
+                    // TalkBack (not just unclear -- the exact "timeline
+                    // ruler have none" gap the backlog names). Exact-pixel
+                    // tap-to-seek isn't reproducible via TalkBack's touch
+                    // exploration, so this offers two coarse but concrete
+                    // anchor points instead: double-tap seeks to the start,
+                    // and a custom action seeks to the end. The bar-number
+                    // Text labels and decorative tick marks below are
+                    // cleared (see clearAndSetSemantics on each) rather than
+                    // merged in -- their per-pixel position isn't
+                    // independently useful once seeking is anchor-based, and
+                    // the current position is already available via
+                    // PlaybackControlBar's own position text.
+                    .semantics {
+                        contentDescription = "Timeline ruler"
+                        onClick(label = "Seek to start") {
+                            onSeekGridUnit(0)
+                            true
+                        }
+                        customActions = listOf(
+                            CustomAccessibilityAction("Seek to end") {
+                                onSeekGridUnit(totalGridUnits)
+                                true
+                            }
+                        )
+                    }
             ) {
                 val beats = totalGridUnits / GridConstants.GRID_UNITS_PER_BEAT
                 for (beat in 0..beats) {
@@ -505,12 +596,13 @@ private fun TimelineRuler(
                             .fillMaxHeight(if (isBar) 1f else 0.5f)
                             .align(Alignment.BottomStart)
                             .background(MaterialTheme.colorScheme.outline)
+                            .clearAndSetSemantics {}
                     )
                     if (isBar) {
                         Text(
                             text = "${(beat / 4) + 1}",
                             style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(start = xOffset + 2.dp)
+                            modifier = Modifier.padding(start = xOffset + 2.dp).clearAndSetSemantics {}
                         )
                     }
                 }
@@ -562,16 +654,40 @@ private fun TrackRow(
             // column removes the overlap for both real taps and tests,
             // without changing the visual layout at all.
             Column(
+                // Post-v1 audit A4 (accessibility, the backlog's own
+                // explicit top priority for this item): selection state was
+                // previously conveyed only as an incidental side effect of
+                // the conditionally-rendered "Selected" Text below getting
+                // swept into clickable's default merge-descendants
+                // announcement -- never a real `selected` semantics
+                // property, so TalkBack couldn't use its own "selected"
+                // announcement idiom and accessibility tooling couldn't
+                // recognize this as a proper selectable item. Modifier.
+                // selectable sets both the click action AND the selected
+                // property together (and merges descendants), replacing the
+                // plain clickable. Visible "Selected" text kept below for
+                // sighted users, but the semantics property is now the
+                // actual source of truth, not a side effect of it.
                 Modifier
                     .testTag("track_header_${track.slot}")
-                    .clickable { onSelectTrack() }
+                    .selectable(selected = isSelected, onClick = onSelectTrack, role = Role.Button)
             ) {
                 Text("Track ${track.slot}", style = MaterialTheme.typography.labelMedium)
                 if (isSelected) {
                     Text(
                         "Selected",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        // Found during this audit's adversarial-review pass:
+                        // Modifier.selectable's `selected` property already
+                        // makes TalkBack announce "Selected" natively as a
+                        // real state, independent of visible text -- leaving
+                        // this Text's own semantics live meant it ALSO got
+                        // pulled into the merged announcement (selectable
+                        // merges descendants), so a selected track read as
+                        // "Track 1, Selected... Selected" -- doubled.
+                        // Purely a sighted-user affordance now.
+                        modifier = Modifier.clearAndSetSemantics {}
                     )
                 }
             }
@@ -609,11 +725,17 @@ private fun TrackRow(
                     }
                 }
                 Box(
+                    // Post-v1 audit A4: purely decorative -- the same
+                    // playback position is already announced via
+                    // PlaybackControlBar's own position Text, so this bar
+                    // is explicitly excluded rather than left as an
+                    // accidental (if currently harmless) semantics gap.
                     Modifier
                         .padding(start = PIXELS_PER_GRID_UNIT * playheadGridUnitPosition)
                         .width(2.dp)
                         .fillMaxHeight()
                         .background(MaterialTheme.colorScheme.error)
+                        .clearAndSetSemantics {}
                 )
             }
         }
@@ -652,9 +774,19 @@ private fun RecordAffordance(
             label = "record_pulse_alpha"
         )
         Row(
+            // Post-v1 audit A4 (accessibility): the exact "icon-only
+            // affordance... currently unreadable by TalkBack" case the
+            // backlog names directly -- a pulsing colored dot plus a bare
+            // elapsed-time number conveyed NOTHING to a screen reader about
+            // what this control is or does. contentDescription is
+            // deliberately static (not built from the live-updating
+            // recordedFrameCount below) -- embedding a continuously-changing
+            // value here risks a spammy re-announcement stream; the numeric
+            // timer stays a sighted-only supplementary detail.
             Modifier
                 .testTag("stop_record_button_$trackSlot")
-                .clickable { onStopRecordTap() },
+                .clickable(role = Role.Button) { onStopRecordTap() }
+                .semantics { contentDescription = "Recording. Double tap to stop." },
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -662,12 +794,18 @@ private fun RecordAffordance(
                     .size(8.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.error.copy(alpha = dotAlpha))
+                    .clearAndSetSemantics {}
             )
             Spacer(Modifier.width(4.dp))
             Text(
                 text = formatPosition(recordedFrameCount, sampleRate),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error
+                color = MaterialTheme.colorScheme.error,
+                // Sighted-only detail -- excluded (not merged) so the
+                // Row's own static contentDescription above is the ENTIRE
+                // accessible content of this control, unaffected by this
+                // text changing many times per second while recording.
+                modifier = Modifier.clearAndSetSemantics {}
             )
         }
     } else {
@@ -677,7 +815,27 @@ private fun RecordAffordance(
             color = if (isDisabled) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error,
             modifier = Modifier
                 .testTag("record_button_$trackSlot")
-                .clickable(enabled = !isDisabled) { onRecordTap() }
+                .clickable(enabled = !isDisabled, role = Role.Button) { onRecordTap() }
+                // Post-v1 audit A4: Compose already marks a disabled
+                // clickable as unavailable to TalkBack automatically, but
+                // gives no reason -- a sighted user infers it from the
+                // dimmed color plus another track's visible pulsing dot
+                // elsewhere on screen, neither of which a screen reader
+                // user has access to. stateDescription (not a full
+                // contentDescription override) layers the reason on top of
+                // the existing "Record" name, matching the SAME "disabled,
+                // here's why" pattern PlaybackControlBar's Play/Pause button
+                // uses above -- found during this audit's adversarial-review
+                // pass as an inconsistency worth unifying.
+                .then(
+                    if (isDisabled) {
+                        Modifier.semantics {
+                            stateDescription = "Unavailable -- another track is currently recording"
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
         )
     }
 }
@@ -692,6 +850,31 @@ private fun BlockView(
     val color = sample?.let { CategoryColors.forCategory(it.category) } ?: MaterialTheme.colorScheme.outline
     val widthDp = (PIXELS_PER_GRID_UNIT * block.lengthGridUnits).let { if (it < 4.dp) 4.dp else it }
     val startDp = PIXELS_PER_GRID_UNIT * block.startGridUnit
+    // Post-v1 audit A4: a block's position/length on the timeline is
+    // otherwise conveyed PURELY spatially (x-offset/width in pixels) --
+    // exactly the "timeline/track-row structure... currently unreadable by
+    // TalkBack" gap the backlog names. Mirrors TimelineRuler's own
+    // beat-to-bar math (GRID_UNITS_PER_BEAT, 4 beats/bar) so a block's
+    // announced position lines up with the ruler's own bar numbers.
+    val startBar = block.startGridUnit / GridConstants.GRID_UNITS_PER_BEAT / 4 + 1
+    // Found during this audit's adversarial-review pass: plain integer
+    // division here floored to 0 for any block shorter than one full beat
+    // (e.g. a short recorded one-shot, whose length is only floored to 1
+    // grid unit, not a whole beat -- see GridConstants.lengthGridUnitsForFrameCount)
+    // and announced a real, audible, visually-rendered block (BlockView
+    // itself coerces a minimum on-screen width so it stays visible/tappable)
+    // as "0 beats long". Rounding to the NEAREST beat, floored at 1, never
+    // announces a nonsensical zero -- exact sub-beat precision isn't the
+    // point of this description any more than exact pixel width is for a
+    // sighted user glancing at the timeline.
+    val lengthBeats = (block.lengthGridUnits.toDouble() / GridConstants.GRID_UNITS_PER_BEAT)
+        .roundToInt()
+        .coerceAtLeast(1)
+    val blockDescription = buildString {
+        append(sample?.name ?: "Unknown")
+        if (sample != null) append(", ${sample.category} loop") else append(" loop")
+        append(", starts at bar $startBar, $lengthBeats beat${if (lengthBeats == 1) "" else "s"} long")
+    }
 
     Box(
         Modifier
@@ -701,7 +884,8 @@ private fun BlockView(
             .clip(RoundedCornerShape(6.dp))
             .background(color)
             .testTag("loop_block_${trackSlot}_${block.sampleId}")
-            .clickable { onTap() }
+            .clickable(role = Role.Button) { onTap() }
+            .semantics(mergeDescendants = true) { contentDescription = blockDescription }
             .padding(4.dp)
     ) {
         // Waveform-visualization upgrade: the block's TRIMMED region only
@@ -727,7 +911,18 @@ private fun BlockView(
             style = MaterialTheme.typography.labelSmall,
             color = Color.White,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            // Found during this audit's adversarial-review pass: the parent
+            // Box's explicit contentDescription (blockDescription, which
+            // already includes this sample name) takes precedence over a
+            // merged child's own text for TalkBack's announcement, so this
+            // likely wasn't double-read in practice -- but every OTHER
+            // redundant-child case in this same diff (RecordAffordance's
+            // dot/timer, LoopLibraryCard, CrashLogsSheet) is explicit about
+            // it via clearAndSetSemantics rather than relying on that
+            // precedence behavior implicitly. Matches that same discipline
+            // here for consistency.
+            modifier = Modifier.clearAndSetSemantics {}
         )
     }
 }

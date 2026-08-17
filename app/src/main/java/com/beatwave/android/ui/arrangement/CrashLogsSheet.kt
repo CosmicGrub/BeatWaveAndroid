@@ -20,6 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
 import java.util.Date
@@ -44,7 +47,14 @@ fun CrashLogsSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                // Post-v1 audit A4: announces the sheet's identity the
+                // instant it opens.
+                .semantics { paneTitle = "Crash Logs" }
+        ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Crash Logs", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.weight(1f))
@@ -84,7 +94,9 @@ private fun CrashLogRow(log: CrashLogSummary, onShareTap: () -> Unit) {
             Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(1f)) {
+            // Post-v1 audit A4: without merging, TalkBack reads the
+            // timestamp and size as two disconnected stops per entry.
+            Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
                 Text(formatCrashTimestamp(log.timestampEpochMs), style = MaterialTheme.typography.bodyLarge)
                 Text(
                     "${log.sizeBytes} bytes",
@@ -92,7 +104,22 @@ private fun CrashLogRow(log: CrashLogSummary, onShareTap: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            TextButton(onClick = onShareTap, modifier = Modifier.testTag("share_crash_log_${log.fileName}")) {
+            // Post-v1 audit A4: with multiple logs listed, a bare "Share"
+            // announcement doesn't say which report is about to be shared.
+            // Size appended (found during this audit's adversarial-review
+            // pass): the displayed timestamp format has no seconds, so two
+            // crashes within the same minute would otherwise still collide
+            // -- size is already visible in this same row and, unlike the
+            // exact file path, is meaningful when read aloud.
+            TextButton(
+                onClick = onShareTap,
+                modifier = Modifier
+                    .semantics {
+                        contentDescription =
+                            "Share crash log from ${formatCrashTimestamp(log.timestampEpochMs)}, ${log.sizeBytes} bytes"
+                    }
+                    .testTag("share_crash_log_${log.fileName}")
+            ) {
                 Text("Share")
             }
         }

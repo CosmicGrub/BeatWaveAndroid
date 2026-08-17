@@ -28,6 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
 import java.util.Date
@@ -61,7 +64,14 @@ fun ProjectPickerSheet(
     var deletingProject by remember { mutableStateOf<ProjectSummary?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                // Post-v1 audit A4: announces the sheet's identity the
+                // instant it opens.
+                .semantics { paneTitle = "Projects" }
+        ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Projects", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.weight(1f))
@@ -168,7 +178,18 @@ private fun ProjectRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    // Post-v1 audit A4: without merging, TalkBack reads the
+                    // name and the "(current)" badge as two disconnected
+                    // stops -- worse, standalone parentheses are often
+                    // dropped/mangled by TTS engines. Scoped to just this
+                    // Row (not the whole Column) so the modified-date line
+                    // below stays its own separate, still-useful stop.
+                    modifier = Modifier.semantics(mergeDescendants = true) {
+                        contentDescription = if (isActive) "${project.name}, current project" else project.name
+                    }
+                ) {
                     Text(project.name, style = MaterialTheme.typography.bodyLarge)
                     if (isActive) {
                         Spacer(Modifier.width(6.dp))
@@ -185,13 +206,41 @@ private fun ProjectRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            TextButton(onClick = onOpen, modifier = Modifier.testTag("open_project_${project.id}")) {
+            // Post-v1 audit A4 (must-fix -- the most severe finding across
+            // this whole audit): in a scrolling list of many projects, a
+            // bare "Open"/"Rename"/"Delete" announcement gives zero
+            // indication which project a given button targets. Worst for
+            // "Open", which has no confirmation step at all and would
+            // silently switch into the wrong project's data on a
+            // misidentified tap. Modified-date appended (found during this
+            // audit's adversarial-review pass): project.name alone still
+            // collides for the common case of several un-renamed projects,
+            // which all default to the exact same "My Project" name -- the
+            // modified date is already visible in this same row and, unlike
+            // the id, is meaningful when read aloud.
+            val disambiguator = "${project.name}, modified ${formatModifiedDate(project.modifiedAtEpochMs)}"
+            TextButton(
+                onClick = onOpen,
+                modifier = Modifier
+                    .semantics { contentDescription = "Open $disambiguator" }
+                    .testTag("open_project_${project.id}")
+            ) {
                 Text("Open")
             }
-            TextButton(onClick = onRenameTap, modifier = Modifier.testTag("rename_project_${project.id}")) {
+            TextButton(
+                onClick = onRenameTap,
+                modifier = Modifier
+                    .semantics { contentDescription = "Rename $disambiguator" }
+                    .testTag("rename_project_${project.id}")
+            ) {
                 Text("Rename")
             }
-            TextButton(onClick = onDeleteTap, modifier = Modifier.testTag("delete_project_${project.id}")) {
+            TextButton(
+                onClick = onDeleteTap,
+                modifier = Modifier
+                    .semantics { contentDescription = "Delete $disambiguator" }
+                    .testTag("delete_project_${project.id}")
+            ) {
                 Text("Delete")
             }
         }
@@ -213,10 +262,15 @@ private fun ProjectNameDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
+            // Post-v1 audit A4: also fixes a real visual gap (this field had
+            // no visible label either) -- without one, TalkBack's
+            // announcement depends entirely on the dialog title having just
+            // been read, and falls back to a generic "Edit box" otherwise.
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
                 singleLine = true,
+                label = { Text("Project name") },
                 modifier = Modifier.fillMaxWidth().testTag("project_name_input")
             )
         },

@@ -38,6 +38,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.beatwave.android.data.model.Sample
 import com.beatwave.android.data.model.SampleCategory
@@ -75,7 +78,15 @@ fun LoopLibraryBottomSheet(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                // Post-v1 audit A4: announces the sheet's identity the
+                // instant it opens, rather than requiring a swipe to the
+                // title text like any other row.
+                .semantics { paneTitle = "Loop Library" }
+        ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Loop Library", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.weight(1f))
@@ -131,6 +142,7 @@ fun LoopLibraryBottomSheet(
                 items(filtered, key = { it.id }) { sample ->
                     LoopLibraryCard(
                         sample = sample,
+                        hasSelectedTrack = selectedTrackSlot != null,
                         onPreview = { onPreview(sample) },
                         onAdd = { onAdd(sample) }
                     )
@@ -145,6 +157,7 @@ fun LoopLibraryBottomSheet(
 @Composable
 private fun LoopLibraryCard(
     sample: Sample,
+    hasSelectedTrack: Boolean,
     onPreview: () -> Unit,
     onAdd: () -> Unit
 ) {
@@ -160,7 +173,9 @@ private fun LoopLibraryCard(
                     .background(CategoryColors.forCategory(sample.category))
             )
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
+            // Post-v1 audit A4: without merging, TalkBack announces the
+            // name and category as two disconnected stops.
+            Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
                 Text(sample.name, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     sample.category.name,
@@ -168,10 +183,35 @@ private fun LoopLibraryCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            TextButton(onClick = onPreview, modifier = Modifier.testTag("preview_loop_${sample.id}")) {
+            // Post-v1 audit A4: in a scrolling list of many cards, a bare
+            // "Preview"/"Add" announcement gives no indication which loop a
+            // given button targets without backing up to re-hear the name.
+            TextButton(
+                onClick = onPreview,
+                modifier = Modifier
+                    .semantics { contentDescription = "Preview ${sample.name}" }
+                    .testTag("preview_loop_${sample.id}")
+            ) {
                 Text("Preview")
             }
-            Button(onClick = onAdd, modifier = Modifier.testTag("add_loop_${sample.id}")) { Text("Add") }
+            // Found during this audit's adversarial-review pass: the plain
+            // "Add {name} to track" description gave no non-visual signal
+            // that tapping Add will no-op when no track is selected yet --
+            // the sighted-only hint above the list ("Select a track on the
+            // timeline first") is a separate, easily-scrolled-away stop not
+            // wired into each card's own Add button.
+            Button(
+                onClick = onAdd,
+                modifier = Modifier
+                    .semantics {
+                        contentDescription = if (hasSelectedTrack) {
+                            "Add ${sample.name} to track"
+                        } else {
+                            "Add ${sample.name}. Select a track on the timeline first."
+                        }
+                    }
+                    .testTag("add_loop_${sample.id}")
+            ) { Text("Add") }
         }
     }
 }

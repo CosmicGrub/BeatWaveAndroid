@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
 
 /**
  * Waveform-visualization upgrade: draws [peaks] (a
@@ -31,7 +32,15 @@ fun WaveformView(
     highlightRange: ClosedFloatingPointRange<Float>? = null,
     highlightColor: Color = color
 ) {
-    Canvas(modifier) {
+    // Post-v1 audit A4: a bare Canvas emits no default semantics today, so
+    // this is already invisible to TalkBack -- but only incidentally, not
+    // declared. clearAndSetSemantics makes the decorative-only intent
+    // explicit and permanent regardless of future modifier changes or new
+    // call sites (this composable is shared by both BlockView on the
+    // timeline and LoopBlockEditorDialog's trim view). Every current call
+    // site already conveys the same information via adjacent Text, so
+    // hiding this loses nothing.
+    Canvas(modifier.clearAndSetSemantics {}) {
         if (peaks.isEmpty()) return@Canvas
         val barCount = peaks.size
         val barWidth = size.width / barCount

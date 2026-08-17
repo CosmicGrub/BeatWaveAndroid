@@ -20,6 +20,9 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.beatwave.android.data.model.LoopBlock
 import com.beatwave.android.data.model.Sample
@@ -63,49 +66,99 @@ fun LoopBlockEditorDialog(
         title = { Text(sample.name) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("Volume: ${(volume * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
-                Slider(value = volume, onValueChange = { volume = it }, valueRange = 0f..1f)
+                // Post-v1 audit A4: each label+control pair below is wrapped
+                // in a mergeDescendants Column -- without it, the label Text
+                // and the slider's own (newly-added) contentDescription/
+                // value semantics would read as two separate, redundant
+                // TalkBack stops for the same control.
+                Column(Modifier.semantics(mergeDescendants = true) {}) {
+                    Text("Volume: ${(volume * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+                    // Slider's own semantics already speak a percentage, but
+                    // nothing identified WHICH slider that was --
+                    // contentDescription names it so it's distinguishable
+                    // from the Pitch slider below.
+                    Slider(
+                        value = volume,
+                        onValueChange = { volume = it },
+                        valueRange = 0f..1f,
+                        modifier = Modifier.semantics { contentDescription = "Volume" }
+                    )
+                }
 
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    "Trim: ${trimStart.toInt()}ms - ${trimEnd.toInt()}ms",
-                    style = MaterialTheme.typography.labelMedium
-                )
-                // Waveform-visualization upgrade: the full sample's
-                // waveform, with the current trim selection highlighted --
-                // lets the user see what they're about to cut before
-                // dragging the RangeSlider below, rather than trimming
-                // blind by numbers alone. No-ops (draws nothing) for a
-                // sample with no peaks yet -- see WaveformView's own doc
-                // comment.
-                WaveformView(
-                    peaks = sample.waveformPeaks,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    highlightRange = (trimStart / maxDurationMs)..(trimEnd / maxDurationMs),
-                    highlightColor = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.height(4.dp))
-                RangeSlider(
-                    value = trimStart..trimEnd,
-                    onValueChange = { range ->
-                        trimStart = range.start
-                        trimEnd = range.endInclusive
-                    },
-                    valueRange = 0f..maxDurationMs
-                )
+                Column(Modifier.semantics(mergeDescendants = true) {}) {
+                    Text(
+                        "Trim: ${trimStart.toInt()}ms - ${trimEnd.toInt()}ms",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    // Waveform-visualization upgrade: the full sample's
+                    // waveform, with the current trim selection highlighted --
+                    // lets the user see what they're about to cut before
+                    // dragging the RangeSlider below, rather than trimming
+                    // blind by numbers alone. No-ops (draws nothing) for a
+                    // sample with no peaks yet -- see WaveformView's own doc
+                    // comment. Already excluded from accessibility
+                    // (clearAndSetSemantics inside WaveformView itself), so
+                    // it contributes nothing to this merge.
+                    WaveformView(
+                        peaks = sample.waveformPeaks,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                        highlightRange = (trimStart / maxDurationMs)..(trimEnd / maxDurationMs),
+                        highlightColor = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    // Corrected during this audit's adversarial-review pass:
+                    // an earlier version of this comment incorrectly claimed
+                    // the pinned compose-bom lacked per-thumb
+                    // contentDescriptions -- checked against the actual
+                    // Material3 1.2.x RangeSlider source: its shared internal
+                    // impl has always set distinct framework-localized
+                    // descriptions ("range start"/"range end") on each
+                    // thumb's own semantics node, even via this plain
+                    // two-arg overload. What those built-in per-thumb labels
+                    // DON'T say is what's being trimmed -- this outer
+                    // contentDescription is a section heading ahead of them
+                    // ("Trim range", then "range start"/"range end" per
+                    // thumb), not a replacement for them. No mergeDescendants
+                    // here, so it can't suppress or collapse the two thumb
+                    // nodes underneath; confirm the full announcement
+                    // sequence sounds right on the real-device TalkBack pass
+                    // rather than trusting the diff, per the backlog item's
+                    // own explicit requirement.
+                    RangeSlider(
+                        value = trimStart..trimEnd,
+                        onValueChange = { range ->
+                            trimStart = range.start
+                            trimEnd = range.endInclusive
+                        },
+                        valueRange = 0f..maxDurationMs,
+                        modifier = Modifier.semantics { contentDescription = "Trim range" }
+                    )
+                }
 
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    "Pitch: ${if (pitch >= 0) "+" else ""}${pitch.toInt()} semitones",
-                    style = MaterialTheme.typography.labelMedium
-                )
-                Slider(
-                    value = pitch,
-                    onValueChange = { pitch = it },
-                    valueRange = -12f..12f,
-                    steps = 23
-                )
+                Column(Modifier.semantics(mergeDescendants = true) {}) {
+                    Text(
+                        "Pitch: ${if (pitch >= 0) "+" else ""}${pitch.toInt()} semitones",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    // Slider's default percentage-of-range readout (0% =
+                    // -12, 100% = +12) doesn't map intuitively onto
+                    // semitones -- stateDescription overrides it with the
+                    // same signed-semitone phrasing already shown in the
+                    // visible label above.
+                    Slider(
+                        value = pitch,
+                        onValueChange = { pitch = it },
+                        valueRange = -12f..12f,
+                        steps = 23,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Pitch"
+                            stateDescription = "${if (pitch >= 0) "+" else ""}${pitch.toInt()} semitones"
+                        }
+                    )
+                }
 
                 Spacer(Modifier.height(16.dp))
                 TextButton(
