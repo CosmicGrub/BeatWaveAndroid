@@ -20,6 +20,7 @@ import com.beatwave.android.data.model.SampleSource
 import com.beatwave.android.data.model.Track
 import com.beatwave.android.data.storage.AppPreferences
 import com.beatwave.android.data.storage.ProjectRepository
+import com.beatwave.android.diagnostics.CrashLogger
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -33,7 +34,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlin.math.ceil
 
 /** Identifies a specific loop block currently open in the editor sheet. */
 data class TrackBlockRef(val trackSlot: Int, val blockId: String)
@@ -94,6 +94,20 @@ data class ProjectSummary(
     val modifiedAtEpochMs: Long
 )
 
+/** Post-v1 audit A2 (crash resilience & diagnostics): what [CrashLogsSheet]
+ *  needs to list and act on a single crash report written by [CrashLogger] --
+ *  a lean projection, not the [java.io.File] itself, mirroring
+ *  [ProjectSummary]'s own precedent. [timestampEpochMs] is parsed straight
+ *  out of the filename (`crash_<epochMs>.txt`) rather than read from the
+ *  file's on-disk mtime, so it stays correct even if the file is ever
+ *  copied/backed up in a way that changes mtime. */
+data class CrashLogSummary(
+    val absolutePath: String,
+    val fileName: String,
+    val timestampEpochMs: Long,
+    val sizeBytes: Long
+)
+
 /**
  * All UI-observable state for [ArrangementScreen] and its children. [project]
  * is null only during the brief initial load in [ArrangementViewModel.init].
@@ -150,7 +164,21 @@ data class ArrangementUiState(
      *  every saved project, most-recently-modified first. Empty until the
      *  picker has been opened at least once; not kept continuously in sync
      *  with disk while the picker is closed (nothing needs it then). */
-    val projectSummaries: List<ProjectSummary> = emptyList()
+    val projectSummaries: List<ProjectSummary> = emptyList(),
+    /** True while [CrashLogsSheet] should be shown (post-v1 audit A2).
+     *  Toggled via [ArrangementViewModel.openCrashLogs]/
+     *  [ArrangementViewModel.closeCrashLogs], mirroring [showProjectPicker]. */
+    val showCrashLogs: Boolean = false,
+    /** Refreshed each time [ArrangementViewModel.openCrashLogs] runs --
+     *  every retained crash report, most recent first (see
+     *  [CrashLogger.listLogs]). */
+    val crashLogSummaries: List<CrashLogSummary> = emptyList(),
+    /** Set by [ArrangementViewModel.shareCrashLog]; the absolute path of the
+     *  crash-report text file [ArrangementScreen] should hand to Android's
+     *  share sheet. One-shot, consumed via [ArrangementViewModel.crashLogShareConsumed],
+     *  mirroring [pendingShareFilePath]'s own shape (kept as a separate
+     *  field since the two share different MIME types/chooser titles). */
+    val pendingShareCrashLogPath: String? = null
 )
 
 /**
@@ -190,10 +218,13 @@ data class ArrangementUiState(
  *
  * DEFAULT BLOCK LENGTH: a newly added block is sized to 4x the sample's
  * natural loop length, rounded up to a whole grid unit (see
- * [defaultLengthGridUnits]) -- long enough to be immediately useful without
- * further editing, short enough not to dominate the timeline. Its start
- * position defaults to the next free grid unit after the track's last
- * existing block (or 0 if the track is empty) -- see [defaultStartGridUnit].
+ * [GridConstants.defaultLengthGridUnits]) -- long enough to be immediately
+ * useful without further editing, short enough not to dominate the
+ * timeline. Its start position defaults to the next free grid unit after
+ * the track's last existing block (or 0 if the track is empty) -- see
+ * [GridConstants.defaultStartGridUnit]. (Post-v1 audit A3: both of these
+ * were extracted out of this class into GridConstants so they're directly
+ * unit-testable; see GridConstantsTest.)
  *
  * MULTIPLE PROJECTS (post-v1 upgrade): [ProjectRepository] has been
  * ID-generic (save/load/list/delete) since Phase 1 -- this class was the
@@ -213,6 +244,13 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
      *  to -- see the class doc's PHASE 6 REFACTOR note. */
     private val playbackEngine: PlaybackEngine =
         (application as BeatWaveApplication).playbackEngine
+
+    /** The same app-wide instance [BeatWaveApplication.onCreate] installs as
+     *  the default uncaught-exception handler -- reused here (rather than a
+     *  second `CrashLogger.forContext(application)`) purely so
+     *  [openCrashLogs] reads the exact directory [install] writes into,
+     *  though either would resolve to the same path. */
+    private val crashLogger: CrashLogger = (application as BeatWaveApplication).crashLogger
 
     // Phase 4: SAF import pipeline collaborators. Neither touches the
     // native engine directly -- decode/persistence only -- so neither needs
@@ -324,8 +362,10 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         }
         val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
 
-        val startGridUnit = defaultStartGridUnit(track)
-        val lengthGridUnits = defaultLengthGridUnits(sample, project.bpm)
+        val startGridUnit = GridConstants.defaultStartGridUnit(
+            track.loopBlocks.map { it.startGridUnit + it.lengthGridUnits }
+        )
+        val lengthGridUnits = GridConstants.defaultLengthGridUnits(sample.durationMs, project.bpm)
         // Phase 8: enforce the spec's "max song length ~2-4 minutes" /
         // "Out of Scope for v1: unlimited... song length" -- without this,
         // repeatedly tapping Add on a track with no more room would just
@@ -353,17 +393,6 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             if (t.slot == trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
         }
         rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
-    }
-
-    /** Next free grid unit after the track's last existing block, or 0 if empty. */
-    private fun defaultStartGridUnit(track: Track): Int =
-        track.loopBlocks.maxOfOrNull { it.startGridUnit + it.lengthGridUnits } ?: 0
-
-    /** 4x the sample's natural length in grid units, rounded up, minimum one beat. */
-    private fun defaultLengthGridUnits(sample: Sample, bpm: Int): Int {
-        val msPerGridUnit = 60000.0 / bpm.toDouble() / GridConstants.GRID_UNITS_PER_BEAT.toDouble()
-        val oneRepeatGridUnits = ceil(sample.durationMs.toDouble() / msPerGridUnit).toInt().coerceAtLeast(1)
-        return (oneRepeatGridUnits * DEFAULT_LOOP_REPEATS).coerceAtLeast(GridConstants.GRID_UNITS_PER_BEAT)
     }
 
     // --- Loop block editing ---
@@ -776,6 +805,53 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    // --- Crash logs (post-v1 audit A2) ---
+    //
+    // CrashLogger itself has no dependency on this ViewModel or its
+    // lifecycle -- it's installed process-wide in BeatWaveApplication.onCreate,
+    // so it keeps capturing crashes whether or not an ArrangementViewModel
+    // (or any UI) currently exists. Everything here is purely UI/state-
+    // management wiring on top of that already-tested, already-running
+    // logger -- mirrors the "Multiple projects" section's own shape exactly.
+
+    /** Refreshes [ArrangementUiState.crashLogSummaries] from disk and shows
+     *  [CrashLogsSheet]. Runs off the main thread (file I/O). */
+    fun openCrashLogs() {
+        viewModelScope.launch(Dispatchers.Default) {
+            val summaries = crashLogger.listLogs().map { file ->
+                val epochMs = file.name.removePrefix("crash_").removeSuffix(".txt").toLongOrNull()
+                    ?: file.lastModified()
+                CrashLogSummary(
+                    absolutePath = file.absolutePath,
+                    fileName = file.name,
+                    timestampEpochMs = epochMs,
+                    sizeBytes = file.length()
+                )
+            }
+            _uiState.update { it.copy(showCrashLogs = true, crashLogSummaries = summaries) }
+        }
+    }
+
+    fun closeCrashLogs() {
+        _uiState.update { it.copy(showCrashLogs = false) }
+    }
+
+    /** Stashes [absolutePath] as [ArrangementUiState.pendingShareCrashLogPath]
+     *  for [ArrangementScreen] to hand to Android's share sheet -- the same
+     *  FileProvider-backed flow [exportProject] already uses (see that
+     *  section's doc comment), just for a plain-text crash report instead of
+     *  a WAV. */
+    fun shareCrashLog(absolutePath: String) {
+        _uiState.update { it.copy(pendingShareCrashLogPath = absolutePath) }
+    }
+
+    /** Consumes [ArrangementUiState.pendingShareCrashLogPath] once
+     *  [ArrangementScreen] has fired the share Intent for it -- mirrors
+     *  [shareFileConsumed]. */
+    fun crashLogShareConsumed() {
+        _uiState.update { it.copy(pendingShareCrashLogPath = null) }
+    }
+
     // --- Export/Share (Phase 7) ---
     //
     // Renders the current project offline to a WAV file (via
@@ -1177,7 +1253,6 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         private const val PROJECT_ID = "current"
         private const val DEFAULT_BPM = 90
         private const val MAX_TRACKS = 8
-        private const val DEFAULT_LOOP_REPEATS = 4
 
         /** Sibling of [com.beatwave.android.data.library.AudioImporter]'s
          *  `imported_samples` directory -- see design item 10. */

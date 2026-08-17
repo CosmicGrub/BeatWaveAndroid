@@ -62,4 +62,33 @@ object GridConstants {
      *  [MAX_SONG_LENGTH_SECONDS] at [bpm]. */
     fun maxSongLengthGridUnits(bpm: Int): Int =
         (MAX_SONG_LENGTH_SECONDS * bpm.toDouble() * GRID_UNITS_PER_BEAT.toDouble() / 60.0).toInt()
+
+    // --- Post-v1 audits/upgrades backlog, item A3 (unit test coverage
+    // expansion): default loop-placement math, extracted out of
+    // ArrangementViewModel.addLoopToSelectedTrack() (where it lived as two
+    // private functions) so it's directly unit-testable without
+    // instantiating an AndroidViewModel/Context -- same rationale as the
+    // Phase 5 extraction of startGridUnitForFrame/lengthGridUnitsForFrameCount
+    // above. Kept in terms of primitives (not the Track/LoopBlock/Sample
+    // domain types) so this object stays dependency-free of data.model, same
+    // as every other function here.
+
+    /** How many times a newly-placed loop repeats by default, before any
+     *  manual trim/edit. */
+    const val DEFAULT_LOOP_REPEATS: Int = 4
+
+    /** Next free grid unit after a track's existing blocks, given each
+     *  existing block's end position (its startGridUnit + lengthGridUnits).
+     *  0 if the track is empty. */
+    fun defaultStartGridUnit(existingBlockEndGridUnits: Collection<Int>): Int =
+        existingBlockEndGridUnits.maxOrNull() ?: 0
+
+    /** [DEFAULT_LOOP_REPEATS]x a sample's natural length in grid units,
+     *  rounded up, minimum one beat. */
+    fun defaultLengthGridUnits(sampleDurationMs: Long, bpm: Int): Int {
+        val msPerGridUnit = 60000.0 / bpm.toDouble() / GRID_UNITS_PER_BEAT.toDouble()
+        val oneRepeatGridUnits =
+            kotlin.math.ceil(sampleDurationMs.toDouble() / msPerGridUnit).toInt().coerceAtLeast(1)
+        return (oneRepeatGridUnits * DEFAULT_LOOP_REPEATS).coerceAtLeast(GRID_UNITS_PER_BEAT)
+    }
 }

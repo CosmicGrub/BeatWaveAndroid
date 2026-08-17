@@ -44,6 +44,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -208,6 +209,24 @@ fun ArrangementScreen(
         }
     }
 
+    // Post-v1 audit A2: same FileProvider-backed share flow as export above,
+    // just for a plain-text crash report (res/xml/file_paths.xml's
+    // files-path/name="crash_logs" entry is what makes filesDir/crash_logs/
+    // shareable this way) instead of a WAV under cacheDir/exports/.
+    LaunchedEffect(uiState.pendingShareCrashLogPath) {
+        val path = uiState.pendingShareCrashLogPath
+        if (path != null) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(sendIntent, "Share crash log"))
+            viewModel.crashLogShareConsumed()
+        }
+    }
+
     val project = uiState.project
 
     Scaffold(
@@ -228,6 +247,18 @@ fun ArrangementScreen(
                     )
                 },
                 actions = {
+                    // Post-v1 audit A2: a small, always-visible entry point
+                    // to the crash-log diagnostics sheet -- same "always
+                    // shown regardless of whether there's anything to act
+                    // on yet" precedent as Export (which is shown even with
+                    // an empty timeline; CrashLogsSheet shows an empty-state
+                    // message the same way).
+                    TextButton(
+                        onClick = viewModel::openCrashLogs,
+                        modifier = Modifier.testTag("crash_logs_button")
+                    ) {
+                        Text("Logs")
+                    }
                     if (uiState.isExporting) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(24.dp).padding(horizontal = 16.dp),
@@ -327,6 +358,14 @@ fun ArrangementScreen(
             onCreate = viewModel::createNewProject,
             onRename = viewModel::renameProject,
             onDelete = viewModel::deleteProject
+        )
+    }
+
+    if (uiState.showCrashLogs) {
+        CrashLogsSheet(
+            logs = uiState.crashLogSummaries,
+            onDismiss = viewModel::closeCrashLogs,
+            onShare = viewModel::shareCrashLog
         )
     }
 
