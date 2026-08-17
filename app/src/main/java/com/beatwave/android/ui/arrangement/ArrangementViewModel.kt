@@ -1052,7 +1052,12 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         // relative to its own native call.
         _uiState.update { it.copy(recordingTrackSlot = trackSlot, recordedFrameCount = 0L) }
         viewModelScope.launch(Dispatchers.Default) {
-            val started = playbackEngine.startRecording()
+            // Post-v1 audit/bugfix B1: pass the app's real max song length
+            // as the recording cap -- this used to be an independent
+            // native-side constant (180s) that had silently drifted out of
+            // sync with this same limit (240s), auto-stopping recordings a
+            // full minute early.
+            val started = playbackEngine.startRecording(GridConstants.MAX_SONG_LENGTH_SECONDS)
             if (!started) {
                 _uiState.update {
                     it.copy(recordingTrackSlot = null, message = "Couldn't start recording -- microphone unavailable.")

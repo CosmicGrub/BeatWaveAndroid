@@ -135,16 +135,18 @@ public:
 
     /** Begins capture: lazily opens a blocking-mode input stream matching
      *  the output stream's format as closely as the device allows,
-     *  pre-allocates a fixed-capacity recording buffer (mandate 3, ~3
-     *  minutes at the engine's negotiated sample rate), captures the
-     *  current transport frame as the recording's start position (mandate
-     *  4), and starts transport playback if it isn't already running
-     *  (mandate 7 -- reuses play(), does not duplicate its logic). Returns
-     *  false if a recording is already in progress, the output sample rate
-     *  isn't known yet (start() hasn't been called), or the input stream
-     *  fails to open (e.g. RECORD_AUDIO not granted, no usable input
-     *  device). Off-audio-thread only -- opens a stream and allocates. */
-    bool startRecording();
+     *  pre-allocates a fixed-capacity recording buffer (mandate 3, sized for
+     *  maxRecordingSeconds at the engine's negotiated sample rate -- see
+     *  beginRecordingCommon()'s doc comment on why this is caller-supplied
+     *  rather than a native-side constant), captures the current transport
+     *  frame as the recording's start position (mandate 4), and starts
+     *  transport playback if it isn't already running (mandate 7 -- reuses
+     *  play(), does not duplicate its logic). Returns false if a recording
+     *  is already in progress, the output sample rate isn't known yet
+     *  (start() hasn't been called), or the input stream fails to open
+     *  (e.g. RECORD_AUDIO not granted, no usable input device).
+     *  Off-audio-thread only -- opens a stream and allocates. */
+    bool startRecording(int32_t maxRecordingSeconds);
 
     /** Stops further capture, closes the input stream, and writes the valid
      *  captured portion of the recording buffer out as a canonical 16-bit
@@ -177,11 +179,11 @@ public:
     double getOutputLatencyMillis() const;
 
     /** True once the current (or most recently finished) recording hit the
-     *  kMaxRecordingSeconds pre-allocated buffer cap and capture was
-     *  stopped (mandate 3). The Kotlin side should poll this the same way
-     *  it polls getRecordedFrameCount() and, on seeing it become true,
-     *  auto-stop the recording gracefully with whatever was captured.
-     *  Reset to false at the start of the next startRecording()/
+     *  caller-supplied maxRecordingSeconds pre-allocated buffer cap and
+     *  capture was stopped (mandate 3). The Kotlin side should poll this
+     *  the same way it polls getRecordedFrameCount() and, on seeing it
+     *  become true, auto-stop the recording gracefully with whatever was
+     *  captured. Reset to false at the start of the next startRecording()/
      *  testStartRecording(). */
     bool isRecordingCapReached() const;
 
@@ -193,7 +195,7 @@ public:
      *  with renderOffline() (which feeds silence through the same
      *  derivation function while a test recording is active) and
      *  testStopRecording(). */
-    void testStartRecording();
+    void testStartRecording(int32_t maxRecordingSeconds);
 
     /** Finalizes a simulated recording via the exact same WAV-writing code
      *  path as stopRecording(). */
@@ -331,7 +333,21 @@ private:
      *  caller forever. */
     void waitForInputReadQuiescence();
 
-    static constexpr int32_t kMaxRecordingSeconds = 180; // mandate 3: ~3 minutes, matches the design spec's own max song length
+    // Post-v1 audit/bugfix B1: the recording cap used to be this same
+    // native-side constant, hardcoded at 180s ("~3 minutes, matches the
+    // design spec's own max song length") while the REAL app-level song
+    // length cap (GridConstants.MAX_SONG_LENGTH_SECONDS, Kotlin) was 240s --
+    // a 25% undershoot that silently auto-stopped recordings a full minute
+    // before the app's own advertised limit. Fixed by making the caller
+    // (Kotlin) supply the real cap explicitly at startRecording()/
+    // testStartRecording() time instead of duplicating it here, so the two
+    // can never drift apart again. This constant is now only a defensive
+    // sanity ceiling -- clamped against in beginRecordingCommon() -- against
+    // a pathological/garbage caller-supplied value (e.g. an accidental
+    // future GridConstants change) causing a runaway allocation; 20 minutes
+    // is a generous multiple of any currently-planned song length cap and is
+    // not expected to ever legitimately bind.
+    static constexpr int32_t kRecordingCapacitySafetyCeilingSeconds = 1200;
     static constexpr int32_t kMaxInputScratchFrames = 4096; // generous vs. real Oboe callback burst sizes; pre-allocated, never resized in the callback
 
     std::atomic<bool> mRecording{false};
@@ -344,12 +360,15 @@ private:
     std::vector<float> mInputScratchBuffer; // kMaxInputScratchFrames * kChannelCount, pre-allocated in startRecording(); onAudioReady's read() target
 
     /** Shared by startRecording() and testStartRecording() (mandate 8):
-     *  pre-allocates/zeroes mRecordingBuffer, resets the recording counters,
-     *  captures the current transport frame as mRecordingStartFrame
-     *  (mandate 4), and publishes mRecording=true last (release). Does NOT
-     *  touch mInputStream/mInputStreamPtr -- callers handle the real-vs-test
-     *  input source themselves. Off-audio-thread only. */
-    void beginRecordingCommon();
+     *  pre-allocates/zeroes mRecordingBuffer (sized for maxRecordingSeconds,
+     *  clamped to (0, kRecordingCapacitySafetyCeilingSeconds] -- see B1's
+     *  doc comment above kRecordingCapacitySafetyCeilingSeconds), resets the
+     *  recording counters, captures the current transport frame as
+     *  mRecordingStartFrame (mandate 4), and publishes mRecording=true last
+     *  (release). Does NOT touch mInputStream/mInputStreamPtr -- callers
+     *  handle the real-vs-test input source themselves. Off-audio-thread
+     *  only. */
+    void beginRecordingCommon(int32_t maxRecordingSeconds);
 
     /** Shared by stopRecording() and testStopRecording(): acquire-loads the
      *  published frame count (happens-before paired with

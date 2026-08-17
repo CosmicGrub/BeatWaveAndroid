@@ -147,7 +147,7 @@ class ProjectPlaybackController(private val context: Context) {
     // SERIALIZATION note) -- see AudioEngineBridge's "Recording" section
     // for the full contract. ---
 
-    fun startRecording(): Boolean = AudioEngineBridge.startRecording()
+    fun startRecording(maxRecordingSeconds: Int): Boolean = AudioEngineBridge.startRecording(maxRecordingSeconds)
     fun stopRecording(outputFilePath: String): Long = AudioEngineBridge.stopRecording(outputFilePath)
     fun isRecording(): Boolean = AudioEngineBridge.isRecording()
     fun getRecordingStartFrame(): Long = AudioEngineBridge.getRecordingStartFrame()

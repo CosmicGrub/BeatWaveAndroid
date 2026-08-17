@@ -380,9 +380,15 @@ int64_t AudioEngine::testGetLoopLocalFrame(int32_t trackSlot, int32_t blockIndex
 // Phase 5: recording
 // ============================================================================
 
-void AudioEngine::beginRecordingCommon() {
+void AudioEngine::beginRecordingCommon(int32_t maxRecordingSeconds) {
+    // B1: clamp the caller-supplied cap against the defensive safety
+    // ceiling (and against <= 0, which would otherwise allocate an
+    // empty/degenerate buffer and immediately report the cap as reached)
+    // rather than trusting it blindly -- see kRecordingCapacitySafetyCeilingSeconds's doc comment.
+    const int32_t clampedMaxRecordingSeconds =
+            std::clamp(maxRecordingSeconds, 1, kRecordingCapacitySafetyCeilingSeconds);
     const int32_t sampleRate = getSampleRate();
-    const int64_t capacityFrames = static_cast<int64_t>(sampleRate) * static_cast<int64_t>(kMaxRecordingSeconds);
+    const int64_t capacityFrames = static_cast<int64_t>(sampleRate) * static_cast<int64_t>(clampedMaxRecordingSeconds);
 
     // Mandate 3: pre-allocate (and re-zero, so a reused buffer from a prior
     // take never leaks stale samples into gaps of THIS take -- see
@@ -406,7 +412,7 @@ void AudioEngine::beginRecordingCommon() {
     mRecording.store(true, std::memory_order_release);
 }
 
-bool AudioEngine::startRecording() {
+bool AudioEngine::startRecording(int32_t maxRecordingSeconds) {
     if (mRecording.load(std::memory_order_relaxed)) {
         LOGE("startRecording() called while a recording is already in progress");
         return false;
@@ -459,7 +465,7 @@ bool AudioEngine::startRecording() {
     mInputStream = inputStream;
     mInputStreamPtr.store(mInputStream.get(), std::memory_order_release);
 
-    beginRecordingCommon();
+    beginRecordingCommon(maxRecordingSeconds);
 
     // Mandate 7: reuse play()'s existing logic rather than duplicating it --
     // starting a recording also starts (or continues) transport playback.
@@ -547,12 +553,12 @@ bool AudioEngine::isRecordingCapReached() const {
     return mRecordingCapReached.load(std::memory_order_relaxed);
 }
 
-void AudioEngine::testStartRecording() {
+void AudioEngine::testStartRecording(int32_t maxRecordingSeconds) {
     // Mandate 8: same pre-allocation/start-frame-capture logic as
     // startRecording(), just never opens a real input stream -- mInputStream
     // / mInputStreamPtr stay null, so onAudioReady is irrelevant here; this
     // offline engine is driven via renderOffline() instead.
-    beginRecordingCommon();
+    beginRecordingCommon(maxRecordingSeconds);
 }
 
 int64_t AudioEngine::testStopRecording(const std::string &outputFilePath) {

@@ -114,8 +114,18 @@ object AudioEngineBridge {
      *  [stopRecording]). Returns false if permission hasn't been granted or
      *  the input stream can't be opened (e.g. no usable input device) --
      *  also requires the output stream to already be open, i.e.
-     *  [startEngine] already called successfully. */
-    external fun startRecording(): Boolean
+     *  [startEngine] already called successfully.
+     *
+     *  Post-v1 audit/bugfix B1: [maxRecordingSeconds] is the caller-supplied
+     *  recording buffer cap -- pass
+     *  [com.beatwave.android.audio.GridConstants.MAX_SONG_LENGTH_SECONDS] so
+     *  recording can never auto-stop before the app's own advertised max
+     *  song length (this used to be a native-side constant that had quietly
+     *  drifted out of sync with that same limit). Clamped native-side
+     *  against a generous defensive ceiling -- see AudioEngine.h's
+     *  kRecordingCapacitySafetyCeilingSeconds doc comment -- so an
+     *  unreasonable value here can't trigger a runaway allocation. */
+    external fun startRecording(maxRecordingSeconds: Int): Boolean
 
     /** Stops capture, closes the input stream, and writes the valid
      *  captured portion of the pre-allocated recording buffer out to
@@ -150,9 +160,10 @@ object AudioEngineBridge {
     external fun getOutputLatencyMillis(): Double
 
     /** True once the current (or most recently finished) recording hit the
-     *  native ~3-minute pre-allocated buffer cap and capture was stopped
-     *  server-side (mandate 3). Poll this the same way [getRecordedFrameCount]
-     *  is already polled and, on seeing it become true, auto-stop the
+     *  caller-supplied maxRecordingSeconds pre-allocated buffer cap (see
+     *  [startRecording]'s doc comment) and capture was stopped server-side
+     *  (mandate 3). Poll this the same way [getRecordedFrameCount] is
+     *  already polled and, on seeing it become true, auto-stop the
      *  recording gracefully with whatever was captured. Resets to false at
      *  the start of the next [startRecording]. */
     external fun isRecordingCapReached(): Boolean
@@ -229,8 +240,9 @@ object AudioEngineBridge {
     // the live path -- see AudioEngine.h's class doc comment.
 
     /** Begins an offline recording against [handle] at its current transport
-     *  frame (captured as recordingStartFrame), mirroring startRecording(). */
-    external fun nativeTestStartRecording(handle: Long)
+     *  frame (captured as recordingStartFrame), mirroring startRecording().
+     *  See startRecording's doc comment on [maxRecordingSeconds]. */
+    external fun nativeTestStartRecording(handle: Long, maxRecordingSeconds: Int)
 
     /** Stops the offline recording and writes the captured (silent) frames
      *  to a real WAV file at [outputFilePath], mirroring stopRecording().
@@ -245,6 +257,12 @@ object AudioEngineBridge {
     external fun nativeTestGetRecordingStartFrame(handle: Long): Long
 
     external fun nativeTestGetRecordedFrameCount(handle: Long): Long
+
+    /** Post-v1 audit/bugfix B1: mirrors [isRecordingCapReached] for the
+     *  offline engine, so a test can verify a caller-supplied
+     *  maxRecordingSeconds cap (see [nativeTestStartRecording]) actually
+     *  takes effect. */
+    external fun nativeTestIsRecordingCapReached(handle: Long): Boolean
 
     external fun nativeTestDestroyOfflineEngine(handle: Long)
 

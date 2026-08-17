@@ -67,7 +67,7 @@ class RecordingLiveHardwareCaptureTest {
         )
 
         try {
-            val recordingStarted = AudioEngineBridge.startRecording()
+            val recordingStarted = AudioEngineBridge.startRecording(GridConstants.MAX_SONG_LENGTH_SECONDS)
             assertTrue(
                 "expected startRecording() to succeed on this device -- RECORD_AUDIO is auto-granted " +
                         "by GrantPermissionRule and the output stream is already open",

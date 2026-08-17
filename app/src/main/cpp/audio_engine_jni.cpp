@@ -136,8 +136,8 @@ Java_com_beatwave_android_AudioEngineBridge_getSampleRate(JNIEnv *, jobject) {
 // AudioEngineBridge.kt exactly -- see that file's "Recording" section.
 
 JNIEXPORT jboolean JNICALL
-Java_com_beatwave_android_AudioEngineBridge_startRecording(JNIEnv *, jobject) {
-    return engine().startRecording() ? JNI_TRUE : JNI_FALSE;
+Java_com_beatwave_android_AudioEngineBridge_startRecording(JNIEnv *, jobject, jint maxRecordingSeconds) {
+    return engine().startRecording(maxRecordingSeconds) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jlong JNICALL
@@ -283,8 +283,8 @@ Java_com_beatwave_android_AudioEngineBridge_nativeTestGetSampleBankCacheEntryCou
 // test can call them.
 
 JNIEXPORT void JNICALL
-Java_com_beatwave_android_AudioEngineBridge_nativeTestStartRecording(JNIEnv *, jobject, jlong handle) {
-    handleToEngine(handle)->testStartRecording();
+Java_com_beatwave_android_AudioEngineBridge_nativeTestStartRecording(JNIEnv *, jobject, jlong handle, jint maxRecordingSeconds) {
+    handleToEngine(handle)->testStartRecording(maxRecordingSeconds);
 }
 
 JNIEXPORT jlong JNICALL
@@ -307,6 +307,15 @@ Java_com_beatwave_android_AudioEngineBridge_nativeTestGetRecordingStartFrame(JNI
 JNIEXPORT jlong JNICALL
 Java_com_beatwave_android_AudioEngineBridge_nativeTestGetRecordedFrameCount(JNIEnv *, jobject, jlong handle) {
     return handleToEngine(handle)->getRecordedFrameCount();
+}
+
+// Post-v1 audit/bugfix B1: exposes isRecordingCapReached() on the offline
+// engine, mirroring the live one -- previously only the live singleton's cap
+// status was queryable from Kotlin, so an instrumented test had no way to
+// verify a caller-supplied maxRecordingSeconds cap actually takes effect.
+JNIEXPORT jboolean JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeTestIsRecordingCapReached(JNIEnv *, jobject, jlong handle) {
+    return handleToEngine(handle)->isRecordingCapReached() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

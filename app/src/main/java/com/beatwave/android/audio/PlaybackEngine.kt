@@ -228,9 +228,13 @@ class PlaybackEngine(context: Context) {
     // --- Recording ---
 
     /** Begins capture and (mirroring the original arm-and-play UX) starts/
-     *  continues transport playback in the same engineMutex-guarded call. */
-    suspend fun startRecording(): Boolean = engineMutex.withLock {
-        val ok = controller.startRecording()
+     *  continues transport playback in the same engineMutex-guarded call.
+     *  [maxRecordingSeconds] should be
+     *  [com.beatwave.android.audio.GridConstants.MAX_SONG_LENGTH_SECONDS] --
+     *  see AudioEngineBridge.startRecording's doc comment (post-v1
+     *  audit/bugfix B1). */
+    suspend fun startRecording(maxRecordingSeconds: Int): Boolean = engineMutex.withLock {
+        val ok = controller.startRecording(maxRecordingSeconds)
         if (ok) {
             controller.play()
             _state.update {

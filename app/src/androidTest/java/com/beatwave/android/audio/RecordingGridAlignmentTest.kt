@@ -174,7 +174,7 @@ class RecordingGridAlignmentTest {
             PRE_ADVANCE_FRAMES % FRAMES_PER_GRID_UNIT.toLong() != 0L
         )
 
-        AudioEngineBridge.nativeTestStartRecording(handle)
+        AudioEngineBridge.nativeTestStartRecording(handle, GridConstants.MAX_SONG_LENGTH_SECONDS)
         assertTrue("expected a recording to be in progress", AudioEngineBridge.nativeTestIsRecording(handle))
 
         advance(PRE_ADVANCE_FRAMES + RECORDING_FRAMES)
@@ -193,7 +193,7 @@ class RecordingGridAlignmentTest {
         assertFalse("expected the recording to have stopped", AudioEngineBridge.nativeTestIsRecording(handle))
         assertTrue("expected a real WAV file to be written", outputFile.exists())
         assertEquals(
-            "expected exactly RECORDING_FRAMES to have been captured (well under the ~3-minute cap)",
+            "expected exactly RECORDING_FRAMES to have been captured (well under the recording cap)",
             RECORDING_FRAMES, framesWritten
         )
         outputFile.delete()
