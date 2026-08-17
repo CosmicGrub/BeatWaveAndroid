@@ -226,6 +226,12 @@ public:
     /** Number of distinct sample assets currently cached. Off-audio-thread only. */
     int32_t testGetSampleBankCacheEntryCount() const;
 
+    /** Post-v1 audit/bugfix B3: number of entries currently retained in
+     *  mRetiredScores, so an instrumented test can verify it stays bounded
+     *  at kRetainedScoreCount across many commits rather than growing
+     *  without limit. Off-audio-thread only. */
+    int32_t testGetRetiredScoreCount() const;
+
     oboe::DataCallbackResult onAudioReady(
             oboe::AudioStream *audioStream,
             void *audioData,
@@ -252,17 +258,95 @@ private:
     // traversal, no allocation, no locking, ever" mandate 7 calls for, with
     // no refcounting overhead at all.
     //
-    // Reclamation trade-off: because the callback holds only a raw
-    // pointer (no shared ownership), a published PlaybackScore must stay
-    // alive for as long as the audio thread could still be reading it. This
-    // engine sidesteps that safely by never freeing a committed score at
-    // all -- every one is retained in mRetiredScores for the engine's
-    // whole lifetime and only released on destruction. commitProject() is a
-    // rare, user-driven event (arrangement edits), not a per-frame one, so
-    // this is a deliberate, bounded trade of a little retained memory for
-    // zero locking/refcounting in the realtime path.
+    // Reclamation: because the callback holds only a raw pointer (no shared
+    // ownership), a published PlaybackScore must stay alive for as long as
+    // the audio thread could still be reading it -- but "reading it" here
+    // means something specific and narrow: onAudioReady loads mScore
+    // EXACTLY ONCE per callback (mandate 7) and never re-reads it mid-call,
+    // and Oboe serializes callbacks for a single stream (only one
+    // onAudioReady invocation is ever in flight at a time -- the exact same
+    // property mInputReadInFlight below already relies on). So at any given
+    // instant the audio thread can be holding a raw pointer to AT MOST one
+    // PlaybackScore: whichever one mScore held at the start of whatever
+    // callback is currently executing (if any).
+    //
+    // Post-v1 audit/bugfix B3: this used to mean simply never freeing
+    // anything (every committed score retained in mRetiredScores for the
+    // engine's whole lifetime, released only on destruction) -- correct,
+    // but genuinely unbounded across a long session with many arrangement
+    // edits. mRetiredScores is now bounded to the newest
+    // kRetainedScoreCount entries. Reclaiming an old one is safe ONLY once
+    // BOTH of these hold: (1) mScore no longer points at it (so no FUTURE
+    // callback can start reading it -- guaranteed by only ever reclaiming
+    // AFTER publishing its replacement), and (2) no callback that started
+    // reading it BEFORE that publish is still mid-callback (checked via
+    // mScoreReadInFlight below, mirroring mInputReadInFlight's already-
+    // established quiescence pattern for the exact same class of problem).
+    // A naive "just erase once the ring overflows" would NOT be safe here:
+    // commitProject() runs on an arbitrary background thread with zero
+    // synchronization against the audio thread beyond the single atomic
+    // mScore pointer, so a still-in-flight callback could be mid-read on
+    // the very entry a naive reclaim just erased/freed.
+    //
+    // This whole scheme additionally requires commitProject() is never
+    // invoked concurrently with itself, or concurrently with
+    // renderOffline()/findBlock() (see their own doc comments -- unlike
+    // onAudioReady, those reads are NOT bracketed by mScoreReadInFlight, on
+    // the assumption that they're only ever driven synchronously from one
+    // caller thread per this class's threading contract). Today this holds
+    // for every real call path: the live engine's schedule-building calls
+    // are only reachable through PlaybackEngine.kt's single instance-scoped
+    // engineMutex, and every offline/export handle is only ever driven
+    // sequentially within one test method or one export call. Violating it
+    // would silently reintroduce a genuine use-after-free with no compiler
+    // warning -- see mCommitInProgressDebugGuard below for a debug-only
+    // tripwire.
     std::atomic<const PlaybackScore *> mScore{nullptr};
-    std::mutex mRetiredScoresMutex; // guards mRetiredScores -- only ever locked off the audio thread, from commitProject()
+
+    // Set true immediately before onAudioReady loads mScore and false
+    // (release) immediately after renderScore() returns -- brackets the
+    // ONLY window during which the audio thread might be dereferencing
+    // whatever PlaybackScore mScore pointed to at load time. Mirrors
+    // mInputReadInFlight exactly (see its own doc comment below for why a
+    // plain bool suffices given Oboe's single-serialized-callback
+    // guarantee). Checked by waitForScoreReadQuiescence() before
+    // commitProject() reclaims an old mRetiredScores entry.
+    //
+    // The store(true) here, onAudioReady's mScore load, commitProject()'s
+    // mScore.store(), and waitForScoreReadQuiescence()'s load of THIS flag
+    // are all seq_cst, not merely release/acquire -- found by this audit's
+    // own adversarial-review pass: those four operations form the textbook
+    // "store buffering" (SB) shape (each thread stores to one atomic then
+    // loads a DIFFERENT one), which the C++ memory model does NOT close
+    // under plain release/acquire -- it would otherwise be theoretically
+    // possible for BOTH threads to observe the other's write as not-yet-
+    // happened simultaneously, letting a reclaim proceed while onAudioReady
+    // is still using the score about to be freed. seq_cst on exactly those
+    // four operations closes that gap; the closing store(false) below stays
+    // release, since it isn't part of that shape.
+    std::atomic<bool> mScoreReadInFlight{false};
+
+#ifndef NDEBUG
+    // Post-v1 audit/bugfix B3, debug-only: detects commitProject() being
+    // invoked concurrently with itself on this instance -- see mScore's doc
+    // comment above for why that would be a real safety violation, not just
+    // a benign race. Compiled out of release builds; never a substitute for
+    // the real synchronization callers are responsible for providing.
+    std::atomic<bool> mCommitInProgressDebugGuard{false};
+#endif
+
+    // Post-v1 audit/bugfix B3: how many of the newest committed scores to
+    // retain before reclaiming the oldest. Deliberately NOT load-bearing
+    // for correctness on its own -- the quiescence wait above is what makes
+    // reclaiming safe, regardless of this count. Kept modest (matching the
+    // 2026-08-17 engine-upgrades backlog's own B3 sketch) purely so an
+    // ordinary commitProject() call's reclaim check almost always finds
+    // nothing to do, rather than to paper over any timing assumption.
+    static constexpr size_t kRetainedScoreCount = 8;
+
+    // mutable: testGetRetiredScoreCount() (post-v1 audit/bugfix B3) needs to
+    // lock this from a const method, same rationale as SampleBank::mMutex.
+    mutable std::mutex mRetiredScoresMutex; // guards mRetiredScores -- only ever locked off the audio thread, from commitProject()
     std::vector<std::unique_ptr<const PlaybackScore>> mRetiredScores;
 
     // Mandate 6: the ONE master transport frame counter. Relaxed ordering
@@ -332,6 +416,16 @@ private:
      *  thread only. Bounded so a stuck/dead audio thread can't hang the
      *  caller forever. */
     void waitForInputReadQuiescence();
+
+    /** Post-v1 audit/bugfix B3: blocks (briefly) until any onAudioReady
+     *  score-read already in flight on the audio thread has finished -- see
+     *  mScoreReadInFlight's doc comment. MUST be called only AFTER
+     *  publishing the entry's replacement via mScore.store() (see
+     *  commitProject()), so no NEW callback can begin referencing the entry
+     *  being reclaimed while this waits for any OLD one to finish. Same
+     *  bounded-spin-wait shape and constants as waitForInputReadQuiescence()
+     *  -- off-audio-thread only, a rare user-driven event, not a hot path. */
+    void waitForScoreReadQuiescence();
 
     // Post-v1 audit/bugfix B1: the recording cap used to be this same
     // native-side constant, hardcoded at 180s ("~3 minutes, matches the

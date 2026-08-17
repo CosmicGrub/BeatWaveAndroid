@@ -231,6 +231,11 @@ object AudioEngineBridge {
     /** Number of distinct sample assets currently cached on [handle]. */
     external fun nativeTestGetSampleBankCacheEntryCount(handle: Long): Int
 
+    /** Post-v1 audit/bugfix B3: number of entries currently retained in
+     *  [handle]'s mRetiredScores, so a test can verify it stays bounded
+     *  across many commits rather than growing without limit. */
+    external fun nativeTestGetRetiredScoreCount(handle: Long): Int
+
     // -- Offline recording diagnostics (Phase 5, mandate 8) --------------
     // Mirror the live startRecording/stopRecording/isRecording/
     // getRecordingStartFrame/getRecordedFrameCount natives above, but

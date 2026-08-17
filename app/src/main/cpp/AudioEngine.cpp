@@ -178,23 +178,77 @@ bool AudioEngine::addLoopBlock(
 }
 
 void AudioEngine::commitProject() {
+#ifndef NDEBUG
+    // Post-v1 audit/bugfix B3, debug-only: the reclaim scheme below (and
+    // renderOffline()/findBlock()'s unbracketed mScore reads) depend on
+    // commitProject() never being invoked concurrently with itself on the
+    // same AudioEngine instance -- see this method's doc comment in
+    // AudioEngine.h. Re-entrancy guard so a future violation is caught
+    // loudly during development instead of silently corrupting memory in
+    // release builds. Not a substitute for the real synchronization
+    // (PlaybackEngine's engineMutex, or single-threaded test/export driving)
+    // -- purely a tripwire.
+    const bool alreadyInProgress = mCommitInProgressDebugGuard.exchange(true, std::memory_order_acq_rel);
+    if (alreadyInProgress) {
+        LOGE("commitProject() invoked concurrently with itself on the same AudioEngine instance -- "
+             "this violates a safety requirement the mRetiredScores reclaim scheme (B3) depends on");
+    }
+#endif
+
     auto owned = std::make_unique<const PlaybackScore>(mBuilder.build());
     const PlaybackScore *raw = owned.get();
 
     {
-        // Off-audio-thread only: retain ownership for the engine's whole
-        // lifetime so the realtime callback can safely hold a bare pointer
-        // to it with zero refcounting (see AudioEngine.h's mScore doc
-        // comment). This mutex is never touched by onAudioReady/
-        // renderOffline.
+        // Off-audio-thread only: retain ownership so the realtime callback
+        // can safely hold a bare pointer to it with zero refcounting (see
+        // AudioEngine.h's mScore doc comment). This mutex is never touched
+        // by onAudioReady/renderOffline.
         std::lock_guard<std::mutex> lock(mRetiredScoresMutex);
         mRetiredScores.push_back(std::move(owned));
     }
 
-    // Mandate 7: publish via a single atomic pointer swap, release-ordered;
-    // the realtime callback picks this up with an acquire load. This is the
-    // ONLY way a new score reaches onAudioReady/renderOffline.
-    mScore.store(raw, std::memory_order_release);
+    // Mandate 7: publish via a single atomic pointer swap; the realtime
+    // callback picks this up in onAudioReady. Post-v1 audit/bugfix B3: this
+    // now MUST be seq_cst, not merely release -- paired with
+    // mScoreReadInFlight's seq_cst operations below and in onAudioReady,
+    // this is the classic four-operation "store buffering" (SB) shape (each
+    // thread stores to one atomic then loads a DIFFERENT one) that plain
+    // release/acquire does NOT rule out under the C++ memory model: it
+    // would otherwise be theoretically possible for onAudioReady's load of
+    // mScore to see a stale (pre-publish) value AND this thread's
+    // subsequent load of mScoreReadInFlight to simultaneously see a stale
+    // (not-yet-true) value, each thread failing to observe the other's
+    // just-issued store -- exactly the interleaving that would let a
+    // reclaim proceed while onAudioReady is still using the score about to
+    // be freed. seq_cst on all four operations (this store, onAudioReady's
+    // mScoreReadInFlight store-true and mScore load, and
+    // waitForScoreReadQuiescence's mScoreReadInFlight load) closes that gap
+    // by design -- see mScoreReadInFlight's doc comment for the full
+    // argument. Found by this audit's own adversarial-review pass; caught
+    // here before it could ship as a narrow, timing-dependent
+    // use-after-free risk in the realtime audio path.
+    mScore.store(raw, std::memory_order_seq_cst);
+
+    // Post-v1 audit/bugfix B3: reclaim the oldest retired score once the
+    // ring exceeds kRetainedScoreCount -- MUST happen strictly AFTER the
+    // publish above (see AudioEngine.h's mScore/mScoreReadInFlight doc
+    // comments for the full safety argument: publishing first guarantees no
+    // FUTURE callback can start referencing the reclaim candidate, and the
+    // quiescence wait below guarantees no callback that started reading it
+    // BEFORE this publish is still doing so).
+    std::unique_ptr<const PlaybackScore> reclaimed; // freed after this scope, off any lock
+    {
+        std::lock_guard<std::mutex> lock(mRetiredScoresMutex);
+        if (mRetiredScores.size() > kRetainedScoreCount) {
+            waitForScoreReadQuiescence();
+            reclaimed = std::move(mRetiredScores.front());
+            mRetiredScores.erase(mRetiredScores.begin());
+        }
+    }
+
+#ifndef NDEBUG
+    mCommitInProgressDebugGuard.store(false, std::memory_order_release);
+#endif
 }
 
 oboe::DataCallbackResult AudioEngine::onAudioReady(
@@ -224,11 +278,24 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
 
     // Mandate 7: exactly one atomic load of the current score, then a
     // read-only traversal + mixing + soft clip below -- no allocation, no
-    // locking, no JNI, no file I/O anywhere in this call.
-    const PlaybackScore *score = mScore.load(std::memory_order_acquire);
+    // locking, no JNI, no file I/O anywhere in this call. Post-v1 audit/
+    // bugfix B3: mScoreReadInFlight brackets exactly this load-and-render
+    // window (real-time-safe atomic stores, no allocation/locking) so
+    // commitProject() can safely reclaim old mRetiredScores entries -- see
+    // mScoreReadInFlight's doc comment in AudioEngine.h. The store(true)
+    // below and the mScore load immediately after it are both seq_cst, not
+    // merely release/acquire -- see commitProject()'s doc comment on its own
+    // mScore.store() for why plain release/acquire leaves a real (if
+    // narrow) "store buffering" gap here that seq_cst is specifically
+    // needed to close. The closing store(false) stays release -- it's not
+    // part of that four-operation shape, just the ordinary signal a
+    // sleep-and-retry poll loop picks up.
+    mScoreReadInFlight.store(true, std::memory_order_seq_cst);
+    const PlaybackScore *score = mScore.load(std::memory_order_seq_cst);
     const int64_t transportFrameStart = mTransportFrame.load(std::memory_order_relaxed);
 
     renderScore(score, transportFrameStart, numFrames, channelCount, floatData);
+    mScoreReadInFlight.store(false, std::memory_order_release);
 
     // Phase 5, mandate 1: while a recording is active, read exactly once
     // from the (already-open, blocking-mode) input stream for this
@@ -301,6 +368,11 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
 }
 
 void AudioEngine::renderOffline(int32_t numFrames, float *scratchBuffer) {
+    // Post-v1 audit/bugfix B3: like findBlock(), this mScore read is NOT
+    // bracketed against a concurrent reclaim -- safe only because this is
+    // driven synchronously from a single caller thread per this class's
+    // threading contract, never concurrently with commitProject() on the
+    // same instance. See mScore's doc comment in AudioEngine.h.
     const PlaybackScore *score = mScore.load(std::memory_order_acquire);
     const int64_t transportFrameStart = mTransportFrame.load(std::memory_order_relaxed);
 
@@ -320,10 +392,17 @@ void AudioEngine::renderOffline(int32_t numFrames, float *scratchBuffer) {
 }
 
 const ResolvedLoopBlock *AudioEngine::findBlock(int32_t trackSlot, int32_t blockIndex) const {
-    // Safe to read straight through the raw pointer with no lifetime dance:
-    // committed scores are retained for the engine's whole lifetime (see
-    // AudioEngine.h's mScore doc comment), so this pointer -- if non-null --
-    // is always valid.
+    // Post-v1 audit/bugfix B3: this used to be safe simply because
+    // committed scores were retained for the engine's whole lifetime -- no
+    // longer true (mRetiredScores is now bounded, see AudioEngine.h's
+    // mScore doc comment). Safe TODAY for a narrower reason: mScore always
+    // references the newest published score, and reclaim only ever frees
+    // the OLDEST retired entry, so this load can never observe a pointer
+    // that reclaim is about to (or already did) free -- PROVIDED this is
+    // never called concurrently with commitProject() on the same instance,
+    // which findBlock() (unlike onAudioReady) does NOT independently
+    // enforce or guard against. See mScore's doc comment for exactly which
+    // callers are relied on to guarantee that today.
     const PlaybackScore *score = mScore.load(std::memory_order_acquire);
     if (!score) {
         return nullptr;
@@ -359,6 +438,11 @@ int64_t AudioEngine::testGetSampleBankCacheBytes() const {
 
 int32_t AudioEngine::testGetSampleBankCacheEntryCount() const {
     return static_cast<int32_t>(mSampleBank.entryCount());
+}
+
+int32_t AudioEngine::testGetRetiredScoreCount() const {
+    std::lock_guard<std::mutex> lock(mRetiredScoresMutex);
+    return static_cast<int32_t>(mRetiredScores.size());
 }
 
 int64_t AudioEngine::testGetLoopLocalFrame(int32_t trackSlot, int32_t blockIndex) const {
@@ -490,6 +574,26 @@ void AudioEngine::waitForInputReadQuiescence() {
     }
     LOGE("waitForInputReadQuiescence() timed out after %dus x %d polls -- "
          "proceeding to close() the input stream anyway",
+         static_cast<int>(kQuiescencePollInterval.count()), kQuiescenceMaxPolls);
+}
+
+void AudioEngine::waitForScoreReadQuiescence() {
+    // MUST be called only after the reclaim candidate's replacement has
+    // already been published via mScore.store() -- see mScoreReadInFlight's
+    // doc comment in AudioEngine.h. Same bounded-spin-wait shape as
+    // waitForInputReadQuiescence() -- off the audio thread, a rare
+    // user-driven event (an arrangement edit), not a hot path. This first
+    // load is seq_cst, not acquire -- see commitProject()'s mScore.store()
+    // doc comment for why the "store buffering" shape this participates in
+    // needs the stronger ordering specifically on this operation.
+    for (int i = 0; i < kQuiescenceMaxPolls; ++i) {
+        if (!mScoreReadInFlight.load(std::memory_order_seq_cst)) {
+            return;
+        }
+        std::this_thread::sleep_for(kQuiescencePollInterval);
+    }
+    LOGE("waitForScoreReadQuiescence() timed out after %dus x %d polls -- "
+         "proceeding to reclaim the retired score anyway",
          static_cast<int>(kQuiescencePollInterval.count()), kQuiescenceMaxPolls);
 }
 

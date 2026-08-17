@@ -267,6 +267,12 @@ Java_com_beatwave_android_AudioEngineBridge_nativeTestGetSampleBankCacheEntryCou
     return handleToEngine(handle)->testGetSampleBankCacheEntryCount();
 }
 
+// Post-v1 audit/bugfix B3 (mRetiredScores ring-buffer bound).
+JNIEXPORT jint JNICALL
+Java_com_beatwave_android_AudioEngineBridge_nativeTestGetRetiredScoreCount(JNIEnv *, jobject, jlong handle) {
+    return handleToEngine(handle)->testGetRetiredScoreCount();
+}
+
 // --- Phase 5, mandate 8: offline/test-only recording natives ---
 // Same handle-based offline engine as the natives above; lets an
 // instrumented test deterministically simulate "start recording at
