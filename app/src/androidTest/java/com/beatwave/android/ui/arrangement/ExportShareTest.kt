@@ -101,12 +101,12 @@ class ExportShareTest {
         // project has nothing to export (see exportProject's own guard),
         // so there must be an actual placed block first. ---
         composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("loop_block_1_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }

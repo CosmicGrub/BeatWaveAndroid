@@ -86,12 +86,12 @@ class ArrangementScreenPlaybackTest {
         // --- (a)+(b): select Track 1, open the loop library, add "Basic
         // Kick" (DRUMS) to it. ---
         composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
 
         val track1KickBlockTag = "loop_block_1_$KICK_SAMPLE_ID"
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
@@ -101,12 +101,12 @@ class ArrangementScreenPlaybackTest {
         // --- (b) continued: select Track 2 (a different track), open the
         // library again, add "Bass Riff One" (BASS) to it. ---
         composeTestRule.onNodeWithTag("track_header_2").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_$BASS_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("add_loop_$BASS_SAMPLE_ID").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
 
         val track2BassBlockTag = "loop_block_2_$BASS_SAMPLE_ID"
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {

@@ -115,12 +115,12 @@ class FullIntegrationWalkthroughTest {
         // --- (1) Bundled loop onto Track 1 -- same flow as
         // ArrangementScreenPlaybackTest. ---
         composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("loop_block_1_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
@@ -154,11 +154,19 @@ class FullIntegrationWalkthroughTest {
         val importedSample = viewModel!!.uiState.value.sampleList.first { it.name == IMPORTED_FIXTURE_NAME }
 
         composeTestRule.onNodeWithTag("track_header_2").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("category_filter_VOCAL").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("category_filter_VOCAL").performClick()
+        // Device-adaptive layouts (2026-08-18 spec), Phase 0: the category
+        // filter row no longer reliably fits all categories without
+        // scrolling now that the Loop Library can render as a narrower
+        // two-pane panel (~34% width) rather than always a full-width
+        // sheet -- VOCAL, the last of 4 categories, can be scrolled off
+        // the visible edge. performScrollTo() first mirrors the same
+        // pattern CategoryPickerDialog's own category_option_VOCAL tap
+        // already uses a few lines above, for the identical reason.
+        composeTestRule.onNodeWithTag("category_filter_VOCAL").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_${importedSample.id}").fetchSemanticsNodes().isNotEmpty()
         }
@@ -175,7 +183,7 @@ class FullIntegrationWalkthroughTest {
         // a sort-first name sidesteps needing LazyColumn's index/key-based
         // scroll APIs entirely.
         composeTestRule.onNodeWithTag("add_loop_${importedSample.id}").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("loop_block_2_${importedSample.id}").fetchSemanticsNodes().isNotEmpty()
         }

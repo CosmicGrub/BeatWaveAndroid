@@ -259,7 +259,7 @@ class ImportedSampleArrangementTest {
         // ArrangementScreenPlaybackTest's use of track_header_1/2, already
         // proven to work on this device).
         composeTestRule.onNodeWithTag("track_header_$TARGET_TRACK_SLOT").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         // The library list is a LazyColumn -- with 8 bundled + 1 imported
         // sample it may not fully fit this device's short screen, and an
         // uncomposed (off-screen) lazy item can't be found by tag at all
@@ -271,12 +271,18 @@ class ImportedSampleArrangementTest {
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("category_filter_VOCAL").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("category_filter_VOCAL").performClick()
+        // Device-adaptive layouts (2026-08-18 spec), Phase 0: same
+        // performScrollTo() need as CategoryPickerDialog's category_option_VOCAL
+        // tap above -- the category filter row no longer reliably fits all
+        // categories without scrolling now that the Loop Library can render
+        // as a narrower two-pane panel (~34% width) instead of always a
+        // full-width sheet.
+        composeTestRule.onNodeWithTag("category_filter_VOCAL").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_${importedSample.id}").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("add_loop_${importedSample.id}").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
 
         val placedBlockTag = "loop_block_${TARGET_TRACK_SLOT}_${importedSample.id}"
         val blockAppeared = runCatching {

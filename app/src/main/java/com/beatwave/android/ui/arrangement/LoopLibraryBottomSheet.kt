@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -70,12 +72,6 @@ fun LoopLibraryBottomSheet(
     onImport: (Uri) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var selectedCategory by remember { mutableStateOf<SampleCategory?>(null) }
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            onImport(uri)
-        }
-    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -95,62 +91,152 @@ fun LoopLibraryBottomSheet(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            OutlinedButton(
-                onClick = { importLauncher.launch(arrayOf("audio/*")) },
-                modifier = Modifier.testTag("import_from_device_button")
-            ) {
-                Text("Import from device")
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = if (selectedTrackSlot != null) {
-                    "Adding to Track $selectedTrackSlot"
-                } else {
-                    "Select a track on the timeline first"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = if (selectedTrackSlot != null) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.error
-                }
-            )
-            Spacer(Modifier.height(8.dp))
-
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                FilterChip(
-                    selected = selectedCategory == null,
-                    onClick = { selectedCategory = null },
-                    label = { Text("All") },
-                    modifier = Modifier.testTag("category_filter_ALL")
+            // Device-adaptive layouts (2026-08-18 spec), Phase 0: the sheet
+            // is naturally viewport-bounded already (ModalBottomSheet caps
+            // its own height), but the original 420.dp cap on the card list
+            // below was specific to sitting comfortably inside a partially-
+            // expanded sheet -- reproduced here at the wrapper level so
+            // LoopLibraryContent itself stays free of a sheet-specific
+            // assumption the persistent-panel wrapper (LoopLibraryPanel)
+            // doesn't want.
+            Box(Modifier.heightIn(max = 420.dp)) {
+                LoopLibraryContent(
+                    samples = samples,
+                    selectedTrackSlot = selectedTrackSlot,
+                    onPreview = onPreview,
+                    onAdd = onAdd,
+                    onImport = onImport
                 )
-                Spacer(Modifier.width(8.dp))
-                for (category in SampleCategory.entries) {
-                    FilterChip(
-                        selected = selectedCategory == category,
-                        onClick = { selectedCategory = category },
-                        label = { Text(category.name) },
-                        modifier = Modifier.testTag("category_filter_${category.name}")
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-
-            val filtered = samples.filter { selectedCategory == null || it.category == selectedCategory }
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                items(filtered, key = { it.id }) { sample ->
-                    LoopLibraryCard(
-                        sample = sample,
-                        hasSelectedTrack = selectedTrackSlot != null,
-                        onPreview = { onPreview(sample) },
-                        onAdd = { onAdd(sample) }
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
             }
             Spacer(Modifier.height(16.dp))
         }
+    }
+}
+
+/**
+ * Device-adaptive layouts (2026-08-18 spec), Phase 0: the loop library's
+ * actual browsing/filtering body -- "Import from device", category filter
+ * chips, and the filtered card list -- extracted out of
+ * [LoopLibraryBottomSheet] so it's reused verbatim by both the bottom-sheet
+ * wrapper (compact width) and [LoopLibraryPanel] (medium/expanded width, a
+ * persistent side panel rather than a modal sheet). Neither wrapper
+ * duplicates this browsing/filtering logic; each only supplies its own
+ * chrome (title/close for the sheet, a pane title for the panel) and its
+ * own height-constraint policy for the card list below.
+ */
+@Composable
+fun LoopLibraryContent(
+    samples: List<Sample>,
+    selectedTrackSlot: Int?,
+    onPreview: (Sample) -> Unit,
+    onAdd: (Sample) -> Unit,
+    onImport: (Uri) -> Unit
+) {
+    var selectedCategory by remember { mutableStateOf<SampleCategory?>(null) }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            onImport(uri)
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        OutlinedButton(
+            onClick = { importLauncher.launch(arrayOf("audio/*")) },
+            modifier = Modifier.testTag("import_from_device_button")
+        ) {
+            Text("Import from device")
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = if (selectedTrackSlot != null) {
+                "Adding to Track $selectedTrackSlot"
+            } else {
+                "Select a track on the timeline first"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (selectedTrackSlot != null) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.error
+            }
+        )
+        Spacer(Modifier.height(8.dp))
+
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            FilterChip(
+                selected = selectedCategory == null,
+                onClick = { selectedCategory = null },
+                label = { Text("All") },
+                modifier = Modifier.testTag("category_filter_ALL")
+            )
+            Spacer(Modifier.width(8.dp))
+            for (category in SampleCategory.entries) {
+                FilterChip(
+                    selected = selectedCategory == category,
+                    onClick = { selectedCategory = category },
+                    label = { Text(category.name) },
+                    modifier = Modifier.testTag("category_filter_${category.name}")
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // fillMaxWidth() + weight(1f) rather than the sheet's original
+        // heightIn(max = 420.dp): in the persistent-panel context this
+        // should fill whatever height the panel actually has, not a
+        // sheet-tuned constant. The sheet wrapper above reproduces its own
+        // 420.dp cap by bounding the whole LoopLibraryContent call instead.
+        val filtered = samples.filter { selectedCategory == null || it.category == selectedCategory }
+        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+            items(filtered, key = { it.id }) { sample ->
+                LoopLibraryCard(
+                    sample = sample,
+                    hasSelectedTrack = selectedTrackSlot != null,
+                    onPreview = { onPreview(sample) },
+                    onAdd = { onAdd(sample) }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Device-adaptive layouts (2026-08-18 spec), Phase 0: the persistent-panel
+ * counterpart to [LoopLibraryBottomSheet] for medium/expanded window size
+ * classes -- same [LoopLibraryContent] body, no modal chrome (no dismiss
+ * button; the panel is always visible in this layout, unlike the sheet
+ * which is explicitly opened/closed), a [paneTitle] instead of an audible
+ * sheet-open announcement, and no sheet-specific height cap -- fills
+ * whatever height its container (the two-pane Row in ArrangementScreen)
+ * actually gives it.
+ */
+@Composable
+fun LoopLibraryPanel(
+    samples: List<Sample>,
+    selectedTrackSlot: Int?,
+    onPreview: (Sample) -> Unit,
+    onAdd: (Sample) -> Unit,
+    onImport: (Uri) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier
+            .fillMaxHeight()
+            .padding(16.dp)
+            .semantics { paneTitle = "Loop Library" }
+            .testTag("loop_library_panel")
+    ) {
+        Text("Loop Library", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        LoopLibraryContent(
+            samples = samples,
+            selectedTrackSlot = selectedTrackSlot,
+            onPreview = onPreview,
+            onAdd = onAdd,
+            onImport = onImport
+        )
     }
 }
 

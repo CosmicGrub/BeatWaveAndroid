@@ -60,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.window.core.layout.WindowSizeClass
 import com.beatwave.android.audio.GridConstants
 import com.beatwave.android.data.model.LoopBlock
 import com.beatwave.android.data.model.Sample
@@ -88,6 +90,15 @@ private val HEADER_WIDTH: Dp = 84.dp
 private val TRACK_ROW_HEIGHT: Dp = 72.dp
 private val PIXELS_PER_GRID_UNIT: Dp = 12.dp
 private const val MIN_TIMELINE_GRID_UNITS = 128
+
+// Device-adaptive layouts (2026-08-18 spec), Phase 0: how much of a
+// medium/expanded window the persistent Loop Library panel claims. Applies
+// identically regardless of which device/orientation triggered the
+// two-pane layout -- per-device tuning (if the Tab/Fold branches find this
+// ratio wrong for their specific proportions) happens in those branches,
+// not here.
+private const val LOOP_LIBRARY_PANEL_WEIGHT = 0.34f
+private const val ARRANGEMENT_PANE_WEIGHT = 1f - LOOP_LIBRARY_PANEL_WEIGHT
 
 /**
  * Main arrangement screen: fixed 8-track vertical list, each with a
@@ -119,6 +130,25 @@ fun ArrangementScreen(
     val scrollState = rememberScrollState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+
+    // Device-adaptive layouts (2026-08-18 spec), Phase 0: computed fresh
+    // from LocalConfiguration every recomposition, so this is a genuinely
+    // live, runtime switch -- it responds correctly to a fold/unfold,
+    // rotation, or DeX window resize while the app is running, not just at
+    // launch. Compact (the default on every phone-sized device, including
+    // the Fold 5's cover screen) keeps today's existing single-column
+    // layout unchanged below; Medium/Expanded switches to a two-pane
+    // layout with a persistent Loop Library panel.
+    val configuration = LocalConfiguration.current
+    val windowSizeClass = WindowSizeClass(
+        configuration.screenWidthDp.toFloat(),
+        configuration.screenHeightDp.toFloat()
+    )
+    val isTwoPane = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
+    // null in two-pane mode: PlaybackControlBar hides the "Loop Library"
+    // button entirely when this is null, since the persistent panel is
+    // already always visible there.
+    val onOpenLibraryAction: (() -> Unit)? = if (isTwoPane) null else ({ showLibrary = true })
 
     // RECORD_AUDIO runtime permission flow (design item 9): requested
     // lazily, only when the user first taps a track's Record button --
@@ -314,7 +344,12 @@ fun ArrangementScreen(
                 sampleRate = uiState.sampleRate,
                 onTogglePlayPause = viewModel::togglePlayPause,
                 onStop = viewModel::stopPlayback,
-                onOpenLibrary = { showLibrary = true }
+                // Device-adaptive layouts (2026-08-18 spec), Phase 0: null
+                // in two-pane mode hides the button entirely rather than
+                // leaving a dead/redundant control -- the Loop Library
+                // panel is already always visible, so there's nothing left
+                // for it to open.
+                onOpenLibrary = onOpenLibraryAction
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -335,41 +370,80 @@ fun ArrangementScreen(
                 (uiState.currentFrame / framesPerGridUnit).toFloat()
             } else 0f
 
-            Column(Modifier.fillMaxSize().padding(padding)) {
-                TimelineRuler(
-                    scrollState = scrollState,
-                    timelineWidthDp = timelineWidthDp,
-                    totalGridUnits = totalGridUnits,
-                    onSeekGridUnit = viewModel::seekToGridUnit
-                )
-                HorizontalDivider()
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(project.tracks, key = { it.slot }) { track ->
-                        TrackRow(
-                            track = track,
-                            samples = uiState.samples,
-                            isSelected = uiState.selectedTrackSlot == track.slot,
-                            isRecording = uiState.recordingTrackSlot == track.slot,
-                            isAnotherTrackRecording = uiState.recordingTrackSlot != null &&
-                                uiState.recordingTrackSlot != track.slot,
-                            recordedFrameCount = uiState.recordedFrameCount,
-                            sampleRate = uiState.sampleRate,
-                            scrollState = scrollState,
-                            timelineWidthDp = timelineWidthDp,
-                            playheadGridUnitPosition = playheadGridUnitPosition,
-                            onSelectTrack = { viewModel.selectTrack(track.slot) },
-                            onBlockTap = { blockId -> viewModel.openBlockEditor(track.slot, blockId) },
-                            onRecordTap = { onRecordTap(track.slot) },
-                            onStopRecordTap = { viewModel.stopRecording() }
-                        )
-                        HorizontalDivider()
+            // Device-adaptive layouts (2026-08-18 spec), Phase 0: identical
+            // content in both layouts -- only what surrounds it (a bare Box
+            // vs. a two-pane Row with a persistent library alongside it)
+            // differs below. Keeping this as one shared lambda, rather than
+            // writing it out twice, is exactly what avoids the two layouts'
+            // arrangement/timeline logic drifting apart over time.
+            val arrangementTimelineContent: @Composable () -> Unit = {
+                Column(Modifier.fillMaxSize()) {
+                    TimelineRuler(
+                        scrollState = scrollState,
+                        timelineWidthDp = timelineWidthDp,
+                        totalGridUnits = totalGridUnits,
+                        onSeekGridUnit = viewModel::seekToGridUnit
+                    )
+                    HorizontalDivider()
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        items(project.tracks, key = { it.slot }) { track ->
+                            TrackRow(
+                                track = track,
+                                samples = uiState.samples,
+                                isSelected = uiState.selectedTrackSlot == track.slot,
+                                isRecording = uiState.recordingTrackSlot == track.slot,
+                                isAnotherTrackRecording = uiState.recordingTrackSlot != null &&
+                                    uiState.recordingTrackSlot != track.slot,
+                                recordedFrameCount = uiState.recordedFrameCount,
+                                sampleRate = uiState.sampleRate,
+                                scrollState = scrollState,
+                                timelineWidthDp = timelineWidthDp,
+                                playheadGridUnitPosition = playheadGridUnitPosition,
+                                onSelectTrack = { viewModel.selectTrack(track.slot) },
+                                onBlockTap = { blockId -> viewModel.openBlockEditor(track.slot, blockId) },
+                                onRecordTap = { onRecordTap(track.slot) },
+                                onStopRecordTap = { viewModel.stopRecording() }
+                            )
+                            HorizontalDivider()
+                        }
                     }
+                }
+            }
+
+            if (isTwoPane) {
+                Row(Modifier.fillMaxSize().padding(padding)) {
+                    Surface(
+                        modifier = Modifier.fillMaxHeight().weight(LOOP_LIBRARY_PANEL_WEIGHT),
+                        tonalElevation = 1.dp
+                    ) {
+                        LoopLibraryPanel(
+                            samples = uiState.sampleList,
+                            selectedTrackSlot = uiState.selectedTrackSlot,
+                            onPreview = viewModel::previewSample,
+                            onAdd = { sample -> viewModel.addLoopToSelectedTrack(sample) },
+                            onImport = { uri -> viewModel.importAudioFromUri(uri) }
+                        )
+                    }
+                    Box(Modifier.fillMaxHeight().weight(ARRANGEMENT_PANE_WEIGHT)) {
+                        arrangementTimelineContent()
+                    }
+                }
+            } else {
+                Box(Modifier.fillMaxSize().padding(padding)) {
+                    arrangementTimelineContent()
                 }
             }
         }
     }
 
-    if (showLibrary) {
+    // Device-adaptive layouts (2026-08-18 spec), Phase 0: the sheet is
+    // redundant once the persistent LoopLibraryPanel is already always
+    // visible in the two-pane layout above -- showLibrary can still flip
+    // true (PlaybackControlBar's own "Loop Library" button is hidden in
+    // two-pane mode below, but nothing stops it being true already from a
+    // window resize that happened while the sheet was open), so this is a
+    // real guard, not just a redundant optimization.
+    if (showLibrary && !isTwoPane) {
         LoopLibraryBottomSheet(
             samples = uiState.sampleList,
             selectedTrackSlot = uiState.selectedTrackSlot,
@@ -447,7 +521,10 @@ private fun PlaybackControlBar(
     sampleRate: Int,
     onTogglePlayPause: () -> Unit,
     onStop: () -> Unit,
-    onOpenLibrary: () -> Unit
+    // Device-adaptive layouts (2026-08-18 spec), Phase 0: null in two-pane
+    // mode, where the Loop Library is already a persistent, always-visible
+    // panel -- this button would be a dead/redundant control there.
+    onOpenLibrary: (() -> Unit)?
 ) {
     Surface(tonalElevation = 3.dp) {
         Row(
@@ -512,8 +589,10 @@ private fun PlaybackControlBar(
                     .testTag("position_text")
             )
             Spacer(Modifier.weight(1f))
-            Button(onClick = onOpenLibrary, modifier = Modifier.testTag("open_library_button")) {
-                Text("Loop Library")
+            if (onOpenLibrary != null) {
+                Button(onClick = onOpenLibrary, modifier = Modifier.testTag("open_library_button")) {
+                    Text("Loop Library")
+                }
             }
         }
     }

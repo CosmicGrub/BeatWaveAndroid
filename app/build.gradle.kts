@@ -98,6 +98,16 @@ dependencies {
     // transitively via media3-session.
     implementation("androidx.media3:media3-session:1.5.1")
 
+    // Device-adaptive layouts (2026-08-18 spec), Phase 0: WindowSizeClass
+    // (compact/medium/expanded width buckets) and FoldingFeature (hinge
+    // position/orientation) drive the responsive compact-vs-two-pane switch
+    // in ArrangementScreen. window-core is declared explicitly too --
+    // androidx.window.core.layout.WindowSizeClass lives there, and it was
+    // NOT reliably ending up on this project's compile classpath as a
+    // transitive dependency of the plain window artifact alone.
+    implementation("androidx.window:window:1.4.0")
+    implementation("androidx.window:window-core:1.4.0")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")

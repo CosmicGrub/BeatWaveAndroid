@@ -12,6 +12,8 @@ import com.beatwave.android.AudioEngineBridge
 import com.beatwave.android.BeatWaveApplication
 import com.beatwave.android.MainActivity
 import com.beatwave.android.data.storage.ProjectRepository
+import com.beatwave.android.ui.arrangement.ensureLoopLibraryClosed
+import com.beatwave.android.ui.arrangement.ensureLoopLibraryOpen
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -114,12 +116,12 @@ class BackgroundPlaybackServiceTest {
         // makes this closer to a genuine "song playing in the background"
         // scenario the manual exit criterion describes. ---
         composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("loop_block_1_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
@@ -258,12 +260,12 @@ class BackgroundPlaybackServiceTest {
         }
 
         composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.onNodeWithTag("open_library_button").performClick()
+        composeTestRule.ensureLoopLibraryOpen()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.onNodeWithTag("loop_library_close_button").performClick()
+        composeTestRule.ensureLoopLibraryClosed()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("loop_block_1_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
         }
