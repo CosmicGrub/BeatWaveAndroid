@@ -1,4 +1,4 @@
-# BeatWave Android — Device-Adaptive Layouts (Galaxy Z Fold 5 / Galaxy Tab S9 FE)
+# BeatWave Android — Device-Adaptive Layouts & Hardware-Specific Quality (Galaxy Z Fold 5 / Galaxy Tab S9 FE)
 
 ## Concept
 
@@ -6,14 +6,20 @@ BeatWave's UI is currently one universal phone-oriented Compose layout: a
 single-column arrangement screen with the Loop Library and per-block editor
 living in modal bottom sheets. Two large/foldable devices are now part of
 this project's real device-testing lineup — a Samsung Galaxy Z Fold 5
-(`SM-F946U`, serial `RFCW80CK2RW`) and a Samsung Galaxy Tab S9 FE
-(`SM-X518U`, serial `R52X101MB6W`) — and the phone-only layout leaves most of
-their screens' width unused.
+(`SM-F946U`, serial `RFCW80CK2RW`, Snapdragon 8 Gen 2, 12GB RAM, both
+displays 120Hz) and a Samsung Galaxy Tab S9 FE (`SM-X518U`, serial
+`R52X101MB6W`, 6GB RAM, dual stereo speakers with Dolby Atmos, S Pen
+included) — and the phone-only layout leaves most of their screens' width,
+and most of their actual hardware, unused.
 
-This spec covers building a genuinely device-tuned experience for both,
-landing as two separate git branches (`device/galaxy-tab-s9fe`,
-`device/galaxy-z-fold-5`) on top of a shared foundation built first on
-`master`.
+This spec now covers two related things for both devices: a genuinely
+device-tuned **layout** (two-pane arrangement, drag-and-drop), and
+genuinely device-tuned **quality/hardware features** grounded in each
+device's real, researched specs (RAM-scaled sample cache, S-Pen precision
+input, Samsung DeX support) — landing as two separate git branches
+(`device/galaxy-tab-s9fe`, `device/galaxy-z-fold-5`) on top of a shared
+foundation built first on `master`, plus explicit follow-on phases for the
+hardware-specific work that doesn't belong in the initial layout pass.
 
 Notably, BeatWave's own original v1 design doc
 (`2026-08-11-beatwave-android-design.md`) already described the Loop
@@ -23,18 +29,25 @@ idea, and it's what large-screen layouts finally make natural to build.
 
 ## Scope decomposition
 
-Three pieces, built in this order:
+Five pieces now, built in this order:
 
 1. **Shared foundation** (not device-specific, lands on `master` first): a
    new minimal Settings screen, a persisted tap/drag-and-drop interaction
-   preference, and the `androidx.window`-based responsive layout mechanism
-   both device branches build on. Built once so neither branch duplicates
-   it.
+   preference, the `androidx.window`-based responsive layout mechanism both
+   device branches build on, a RAM-scaled sample cache budget, and the
+   verification methodology for stereo-output and animation-smoothness
+   checks (see below). Built once so no later phase duplicates it.
 2. **`device/galaxy-tab-s9fe`**: two-pane layout tuned for the tablet's
    landscape proportions.
 3. **`device/galaxy-z-fold-5`**: two-pane layout tuned for the unfolded
    inner screen, plus verification/polish of the (structurally unchanged)
    compact layout on the cover screen.
+4. **S-Pen precision input** (follow-on phase, continues on
+   `device/galaxy-tab-s9fe` after piece 2 lands — Tab-specific, since the
+   Fold 5 has no stylus).
+5. **Samsung DeX support** (follow-on phase, touches both branches — small
+   additional commits on each, after pieces 2/3 land, verifying the
+   shared-foundation pointer-input groundwork actually works well docked).
 
 ## Shared foundation
 
@@ -93,6 +106,54 @@ generally not operable via TalkBack. Each `LoopLibraryCard` keeps a
 or visible track) regardless of interaction mode, so enabling drag-and-drop
 never regresses accessibility for anyone navigating by screen reader.
 
+### RAM-scaled sample cache budget
+
+`SampleBank::kDefaultMaxCacheBytes` is a fixed 256MiB constant today,
+chosen conservatively for a typical/budget phone (D1, 2026-08-17). The Tab
+S9 FE (6GB RAM) and especially the Fold 5 (12GB RAM) can comfortably run a
+much larger cache without memory pressure, meaning fewer re-decodes when
+switching between projects that share loop assets. This is deliberately
+**general, RAM-aware logic, not a per-device hardcoded value**: at
+`AudioEngine::init()` time, Kotlin queries `ActivityManager.getMemoryClass()`
+(the standard, guaranteed-safe per-app heap size in MB) and computes a
+scaled cache budget, passed to native via the exact mechanism D1 already
+built for its test-only override (`testSetSampleBankMaxCacheBytes`) —
+generalized here into a real production-path setter, not a test hook. Any
+device with enough memory class benefits automatically; the Tab and Fold
+are simply the first devices verifying it actually helps.
+
+### Verification methodology: stereo output and animation smoothness
+
+Two verification items belong in the shared foundation as *methodology*,
+even though they're executed per-device later (see "Device-specific work"
+and the follow-on phases):
+
+- **Stereo output, not a silent downmix.** Both devices' speaker hardware
+  is Dolby-Atmos-branded. `MixEngine` is architecturally stereo throughout
+  (`kChannelCount = 2`) and stays that way — see "Explicitly out of scope"
+  below. What's real and verifiable: confirming the Oboe output stream
+  actually negotiates true stereo channel output on this hardware, not a
+  silent downmix. Verified via E7's existing stream-open diagnostic
+  logging (already logs `performanceMode`/`audioApi`; extend to explicitly
+  log channel count too) plus an audible hard-left/hard-right pan test
+  tone on each device.
+- **120Hz animation smoothness.** The Fold 5 is confirmed 120Hz on both
+  displays; the Tab S9 FE's refresh rate needs on-device confirmation
+  (not settled by this round of research). Verify the playhead and
+  timeline-scroll animations aren't implicitly capped below the display's
+  real refresh rate.
+
+### DeX pointer-input groundwork
+
+Samsung DeX support (full follow-on phase below) needs baseline
+non-touch-pointer handling that's genuinely shared, not device-specific:
+mouse hover states on buttons/cards (Compose's `Modifier.hoverable`),
+right-click context-menu support where natural (e.g. a quick-actions menu
+on a block), and basic transport keyboard shortcuts (space = play/pause).
+This groundwork lands in the shared foundation because it's useful even
+outside DeX (e.g. a Bluetooth mouse/keyboard paired to a phone) — the DeX
+phase later only adds and verifies the DeX-specific polish on top of it.
+
 ## Device-specific work
 
 ### Tab S9 FE
@@ -127,18 +188,51 @@ right at this specific narrow-tall aspect ratio? Fix whatever doesn't,
 within the existing compact layout — this is a polish/bugfix pass, not a
 redesign.
 
+## Follow-on phase: S-Pen precision input (Tab only)
+
+Real Android stylus support via standard `MotionEvent.TOOL_TYPE_STYLUS`
+detection and `MotionEvent.getPressure()` — no proprietary Samsung SDK
+needed for this baseline. Target: `LoopBlockEditor`'s Trim `RangeSlider`
+and Pitch `Slider` gain finer drag precision when the active pointer is
+detected as a stylus (a reduced drag-distance-per-unit-change ratio),
+giving genuinely more precise control than a fingertip for fine edits.
+
+**Optional, not required:** S-Pen hover preview (hovering a loop card
+in the library panel previews it without tapping, via Compose's hover
+APIs). Build the baseline pressure-aware dragging first; add hover preview
+only if it turns out cheap on top of the DeX pointer-input groundwork
+already in the shared foundation.
+
+## Follow-on phase: Samsung DeX support (both devices)
+
+Builds on the shared-foundation pointer-input groundwork (hover, right-click,
+keyboard shortcuts). Per-device work here is verification, not new
+structural design: does the two-pane layout continue to look and behave
+correctly in a DeX window at arbitrary resize dimensions, do hover and
+right-click actually reach the app correctly when DeX-docked, and does
+window resizing interact sanely with the `WindowSizeClass` breakpoints
+already driving the compact/expanded switch. Verified docked, on a real
+monitor/dock, on both devices.
+
 ## Testing & verification
 
 - Compose UI tests exercising the responsive switch itself at both size
   classes — asserting compact renders the sheet-based flow and
   expanded/medium renders the persistent panel, not just "it compiles."
+- Unit coverage on the RAM-scaled cache budget formula itself (given a
+  memory class, does it compute the expected bound), independent of any
+  device.
 - Accessibility pass on the new Settings screen and the drag-and-drop
   fallback actions, verified via `adb shell uiautomator dump` against the
   real `AccessibilityNodeInfo` tree, matching A4's established method.
-- Real on-device verification on all three configurations (Tab landscape,
-  Fold unfolded, Fold cover) on the actual connected hardware — screenshots
-  plus genuine interaction, never claimed from compilation or a Compose
-  preview alone.
+- Real on-device verification on all three layout configurations (Tab
+  landscape, Fold unfolded, Fold cover) on the actual connected hardware —
+  screenshots plus genuine interaction, never claimed from compilation or
+  a Compose preview alone.
+- Real on-device verification of the hardware-quality items: the
+  hard-left/hard-right stereo pan test and 120Hz animation check (both
+  devices), S-Pen pressure-aware dragging (Tab), and DeX-docked behavior
+  (both devices, on a real monitor/dock).
 - An adversarial-review workflow pass on each branch's diff before commit,
   matching the sweep-then-implement-then-adversarially-review pipeline used
   throughout this project's post-v1 audit/upgrade work.
@@ -146,22 +240,28 @@ redesign.
 ## Branching & sequencing plan
 
 1. Shared foundation (Settings screen + preference, `WindowSizeClass`
-   switch skeleton, `LoopLibraryContent` extraction) lands on `master`,
-   verified on whichever connected device is most convenient, committed and
-   pushed to `github.com/CosmicGrub/BeatWaveAndroid`.
+   switch skeleton, `LoopLibraryContent` extraction, RAM-scaled cache
+   budget, DeX pointer-input groundwork, verification methodology) lands on
+   `master`, verified on whichever connected device is most convenient,
+   committed and pushed to `github.com/CosmicGrub/BeatWaveAndroid`.
 2. Branch `device/galaxy-tab-s9fe` off `master` → Tab-specific two-pane
    tuning and verification → commit, push.
 3. Branch `device/galaxy-z-fold-5` off `master` (independent/parallel to
    the Tab branch, not stacked on it) → unfolded two-pane tuning +
    cover-screen verification/polish + optional hinge-awareness → commit,
    push.
-4. Both branches stay open on GitHub for manual review/merge later — this
-   spec does not include merging either branch back into `master`.
+4. Follow-on: S-Pen precision input lands as further commits on
+   `device/galaxy-tab-s9fe` (after piece 2 is verified) → commit, push.
+5. Follow-on: Samsung DeX verification/polish lands as further commits on
+   *both* `device/galaxy-tab-s9fe` and `device/galaxy-z-fold-5` (after
+   pieces 2/3 are verified) → commit, push each.
+6. All branches stay open on GitHub for manual review/merge later — this
+   spec does not include merging any branch back into `master`.
 
 ## Explicitly out of scope
 
-- Merging `device/galaxy-tab-s9fe` or `device/galaxy-z-fold-5` back into
-  `master` — a later, separate decision.
+- Merging any device branch back into `master` — a later, separate
+  decision.
 - Any device beyond these two connected ones (e.g. generic large-screen
   support). The `WindowSizeClass` mechanism will incidentally behave
   reasonably on other large/foldable devices as a side effect of being
@@ -172,6 +272,14 @@ redesign.
   will technically engage there too.
 - The Fold 5 hinge-aware pane divider, unless it turns out to be cheap once
   the underlying plumbing exists (see "Optional enhancement" above).
+- **True multi-channel/object-based audio (Dolby Atmos mixing).**
+  `MixEngine` stays architecturally stereo (`kChannelCount = 2`) throughout
+  this spec — the Atmos-branded speaker hardware only motivates *verifying
+  genuine stereo output*, not adding real multi-channel mixing, which would
+  be a native engine rearchitecture out of scope here.
+- **Deep Samsung S-Pen SDK integration** (Air Command shortcuts, custom
+  S-Pen gestures beyond hover/pressure). Only standard Android stylus
+  `MotionEvent` handling is in scope.
 - Any additional Settings entries beyond the interaction-mode toggle (e.g.
   dark theme itself) — the screen is built to hold future settings, but
   only the one toggle is in scope now.
