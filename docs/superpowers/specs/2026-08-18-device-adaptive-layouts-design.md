@@ -137,11 +137,13 @@ and the follow-on phases):
   logging (already logs `performanceMode`/`audioApi`; extend to explicitly
   log channel count too) plus an audible hard-left/hard-right pan test
   tone on each device.
-- **120Hz animation smoothness.** The Fold 5 is confirmed 120Hz on both
-  displays; the Tab S9 FE's refresh rate needs on-device confirmation
-  (not settled by this round of research). Verify the playhead and
-  timeline-scroll animations aren't implicitly capped below the display's
-  real refresh rate.
+- **Animation smoothness at each device's real refresh rate.** The Fold 5
+  is confirmed 120Hz on both displays. The Tab S9 FE's refresh rate is
+  now confirmed too — 90Hz, not 120Hz, per `dumpsys display`'s
+  `supportedRefreshRates`/`mActiveSfDisplayMode` (this project's earlier
+  120Hz assumption for the Tab was never actually confirmed and was
+  wrong). Verify the playhead and timeline-scroll animations aren't
+  implicitly capped below each device's own real refresh rate.
 
 ### DeX pointer-input groundwork
 
@@ -230,7 +232,8 @@ monitor/dock, on both devices.
   screenshots plus genuine interaction, never claimed from compilation or
   a Compose preview alone.
 - Real on-device verification of the hardware-quality items: the
-  hard-left/hard-right stereo pan test and 120Hz animation check (both
+  hard-left/hard-right stereo pan test and animation-smoothness check at
+  each device's own real refresh rate (120Hz Fold, 90Hz Tab — both
   devices), S-Pen pressure-aware dragging (Tab), and DeX-docked behavior
   (both devices, on a real monitor/dock).
 - An adversarial-review workflow pass on each branch's diff before commit,
