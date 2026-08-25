@@ -29,6 +29,7 @@ class DataModelSanityTest {
         assertEquals(0L, block.trimStartMs)
         assertNull(block.trimEndMs)
         assertEquals(0f, block.pitchSemitones)
+        assertNull(block.pitchRow)
     }
 
     @Test
@@ -36,6 +37,17 @@ class DataModelSanityTest {
         val track = Track(slot = 1)
 
         assertTrue(track.loopBlocks.isEmpty())
+    }
+
+    @Test
+    fun `Track defaults to an empty assignedSampleIds list`() {
+        // Grid-sequencer redesign (2026-08-24 spec), Tier 0: a freshly
+        // constructed Track (as opposed to one loaded through
+        // ProjectRepository, which applies migrateTrackAssignedSampleIds)
+        // has no assignment until something explicitly sets one.
+        val track = Track(slot = 1)
+
+        assertTrue(track.assignedSampleIds.isEmpty())
     }
 
     @Test

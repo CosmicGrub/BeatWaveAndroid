@@ -2,6 +2,7 @@ package com.beatwave.android.data.storage
 
 import android.content.Context
 import com.beatwave.android.data.model.Project
+import com.beatwave.android.data.model.migrateProjectAssignedSampleIds
 import java.io.File
 import java.io.IOException
 import kotlinx.serialization.SerializationException
@@ -59,7 +60,11 @@ class ProjectRepository(private val projectsDir: File) {
     private fun decodeProjectFile(file: File): Project? {
         if (!file.exists()) return null
         return try {
-            json.decodeFromString<Project>(file.readText())
+            // Grid-sequencer redesign (2026-08-24 spec), Tier 0: applied
+            // here, the single choke point every project decode already
+            // passes through, so every caller of load()/list() gets an
+            // already-migrated Project with no separate step to remember.
+            migrateProjectAssignedSampleIds(json.decodeFromString<Project>(file.readText()))
         } catch (e: SerializationException) {
             null
         } catch (e: IllegalArgumentException) {

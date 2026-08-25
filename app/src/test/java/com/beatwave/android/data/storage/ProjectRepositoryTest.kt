@@ -81,7 +81,21 @@ class ProjectRepositoryTest {
         val loaded = repository.load(original.id)
 
         assertNotNull("expected the saved project to load back", loaded)
-        assertEquals(original, loaded)
+        // Grid-sequencer redesign (2026-08-24 spec), Tier 0: load() now
+        // migrates any track with no explicit assignedSampleIds, deriving
+        // it from that track's own loop blocks -- so `loaded` is no
+        // longer byte-identical to `original` for a track that never set
+        // this field explicitly (none of this fixture's tracks do).
+        // Compare against the expected POST-migration shape instead of a
+        // blind original==loaded check, so this test still proves the
+        // real round-trip AND the migration together, not less than
+        // before.
+        val expectedAfterMigration = original.copy(
+            tracks = original.tracks.map { track ->
+                track.copy(assignedSampleIds = track.loopBlocks.map { it.sampleId }.distinct())
+            }
+        )
+        assertEquals(expectedAfterMigration, loaded)
 
         // Spot-check the sampleId references actually resolve against the
         // bundled manifest, since that's the point of this test.
@@ -94,6 +108,55 @@ class ProjectRepositoryTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun `load reads pre-Tier-0 project JSON missing assignedSampleIds and pitchRow, migrating it`() {
+        // Grid-sequencer redesign (2026-08-24 spec), Tier 0: hand-written
+        // JSON shaped exactly like a project saved before this phase --
+        // no "assignedSampleIds" key on the track, no "pitchRow" key on
+        // the loop block at all. kotlinx.serialization's own default-value
+        // handling (not a special migration-specific decoder) is what
+        // makes this parse successfully; migrateProjectAssignedSampleIds
+        // then derives the real assignment from the track's one block.
+        val projectsDir = tempFolder.newFolder("projects")
+        val repository = ProjectRepository(projectsDir)
+        val legacyJson = """
+            {
+              "id": "legacy-project",
+              "name": "Pre-Tier-0 Project",
+              "bpm": 100,
+              "tracks": [
+                {
+                  "slot": 1,
+                  "loopBlocks": [
+                    { "id": "b1", "sampleId": "kick_basic_01", "startGridUnit": 0, "lengthGridUnits": 4 }
+                  ]
+                },
+                { "slot": 2 }
+              ],
+              "createdAtEpochMs": 1700000000000,
+              "modifiedAtEpochMs": 1700000100000
+            }
+        """.trimIndent()
+        File(projectsDir, "legacy-project.json").writeText(legacyJson)
+
+        val loaded = repository.load("legacy-project")
+
+        assertNotNull("expected legacy-format JSON (missing new Tier 0 fields) to still parse", loaded)
+        assertEquals(0f, loaded!!.tracks[0].loopBlocks[0].pitchSemitones)
+        assertNull(
+            "expected pitchRow to default to null for a block predating this field",
+            loaded.tracks[0].loopBlocks[0].pitchRow
+        )
+        assertEquals(
+            "expected Track 1's assignedSampleIds to be MIGRATED (derived) from its own block, not left empty",
+            listOf("kick_basic_01"), loaded.tracks[0].assignedSampleIds
+        )
+        assertTrue(
+            "expected Track 2 (no blocks at all) to migrate to an empty assignedSampleIds, not throw",
+            loaded.tracks[1].assignedSampleIds.isEmpty()
+        )
     }
 
     @Test
