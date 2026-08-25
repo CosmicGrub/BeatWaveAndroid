@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,6 +37,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -87,18 +90,38 @@ import java.io.File
 import kotlin.math.roundToInt
 
 private val HEADER_WIDTH: Dp = 84.dp
-private val TRACK_ROW_HEIGHT: Dp = 72.dp
+
+// Phase 2 (Fold branch) finding: 72dp fit the unselected 2-line header
+// ("Track N" + Record) comfortably, but confirmed on-device to clip the
+// 3rd line ("Selected") that appears when a track is actually selected --
+// the exact state a real interaction check (not just a static layout
+// screenshot) surfaces immediately. Not Fold-specific: HEADER_WIDTH/
+// TRACK_ROW_HEIGHT are fixed dp constants shared by every device, so this
+// was already clipping everywhere selection was checked closely; simply
+// never caught before this pass. 80dp gives the 3-line case real headroom
+// while the extra 8dp × 8 tracks is negligible against any of this
+// project's real screens' height.
+private val TRACK_ROW_HEIGHT: Dp = 80.dp
 private val PIXELS_PER_GRID_UNIT: Dp = 12.dp
 private const val MIN_TIMELINE_GRID_UNITS = 128
 
 // Device-adaptive layouts (2026-08-18 spec), Phase 0: how much of a
 // medium/expanded window the persistent Loop Library panel claims. Applies
 // identically regardless of which device/orientation triggered the
-// two-pane layout -- per-device tuning (if the Tab/Fold branches find this
-// ratio wrong for their specific proportions) happens in those branches,
-// not here.
+// two-pane layout.
 private const val LOOP_LIBRARY_PANEL_WEIGHT = 0.34f
-private const val ARRANGEMENT_PANE_WEIGHT = 1f - LOOP_LIBRARY_PANEL_WEIGHT
+
+// Phase 2 (Fold branch) finding: a device with less absolute width in its
+// Medium/Expanded window than the Tab (e.g. the Fold 5 unfolded, ~690dp,
+// versus the Tab's ~823dp) can end up with a panel too narrow for its own
+// content even at the SAME weight above -- confirmed on-device: "Import
+// from device" wrapped to two lines on the Fold at the weight-only width
+// (~235dp) but not on the Tab (~280dp). Rather than forking a second,
+// per-device weight constant, floor the panel's absolute width at
+// whatever's already verified to look right on the Tab, so any device
+// gets at least that much room; the weight above still governs on wider
+// windows where it naturally produces more than this floor.
+private val LOOP_LIBRARY_PANEL_MIN_WIDTH: Dp = 280.dp
 
 /**
  * Main arrangement screen: fixed 8-track vertical list, each with a
@@ -411,9 +434,17 @@ fun ArrangementScreen(
             }
 
             if (isTwoPane) {
+                // See LOOP_LIBRARY_PANEL_MIN_WIDTH above: floor the panel's
+                // absolute width rather than relying on the weight alone,
+                // so a narrower-dp device (Fold unfolded) doesn't get a
+                // skinnier panel than a wider one (Tab) at the same ratio.
+                val panelWidth = maxOf(
+                    LOOP_LIBRARY_PANEL_MIN_WIDTH,
+                    (configuration.screenWidthDp * LOOP_LIBRARY_PANEL_WEIGHT).dp
+                )
                 Row(Modifier.fillMaxSize().padding(padding)) {
                     Surface(
-                        modifier = Modifier.fillMaxHeight().weight(LOOP_LIBRARY_PANEL_WEIGHT),
+                        modifier = Modifier.fillMaxHeight().width(panelWidth),
                         tonalElevation = 1.dp
                     ) {
                         LoopLibraryPanel(
@@ -424,7 +455,9 @@ fun ArrangementScreen(
                             onImport = { uri -> viewModel.importAudioFromUri(uri) }
                         )
                     }
-                    Box(Modifier.fillMaxHeight().weight(ARRANGEMENT_PANE_WEIGHT)) {
+                    // The only weighted child left in this Row -- fills
+                    // whatever width panelWidth above didn't claim.
+                    Box(Modifier.fillMaxHeight().weight(1f)) {
                         arrangementTimelineContent()
                     }
                 }
@@ -526,7 +559,14 @@ private fun PlaybackControlBar(
     // panel -- this button would be a dead/redundant control there.
     onOpenLibrary: (() -> Unit)?
 ) {
-    Surface(tonalElevation = 3.dp) {
+    // Phase 2 (Fold branch) finding: on this device/OS configuration,
+    // Android's large-screen system Taskbar (a persistent bottom dock,
+    // distinct from the plain 3-button/gesture nav bar) overlapped this
+    // bar's own Stop button and elapsed-time text -- confirmed via
+    // `dumpsys window windows` showing a genuine TaskbarWindow, not an
+    // app rendering bug. navigationBarsPadding() is the standard Compose
+    // handling for exactly this class of bottom system chrome.
+    Surface(tonalElevation = 3.dp, modifier = Modifier.navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -590,8 +630,25 @@ private fun PlaybackControlBar(
             )
             Spacer(Modifier.weight(1f))
             if (onOpenLibrary != null) {
-                Button(onClick = onOpenLibrary, modifier = Modifier.testTag("open_library_button")) {
-                    Text("Loop Library")
+                // Phase 2 (Fold branch) finding: at the cover screen's own
+                // narrow width (~344dp), this button was left with less
+                // remaining Row space than "Loop Library" needs on one
+                // line -- confirmed on-device: the button's own Text
+                // wrapped across three lines, overlapping the position
+                // text next to it. "Library" alone reads the same in
+                // context (nothing else on this bar could be mistaken for
+                // a library); tighter horizontal content padding than
+                // Material3's default (24dp/side) reclaims real width
+                // rather than fighting the squeeze with copy alone, and
+                // maxLines/overflow stays as a backstop so an even
+                // narrower future device degrades to an ellipsis instead
+                // of a multi-line wrap either way.
+                Button(
+                    onClick = onOpenLibrary,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.testTag("open_library_button")
+                ) {
+                    Text("Library", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
