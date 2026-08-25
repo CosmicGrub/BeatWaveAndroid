@@ -70,7 +70,15 @@ fun LoopLibraryBottomSheet(
     onDismiss: () -> Unit,
     onPreview: (Sample) -> Unit,
     onAdd: (Sample) -> Unit,
-    onImport: (Uri) -> Unit
+    onImport: (Uri) -> Unit,
+    // Grid-sequencer redesign (2026-08-24 spec), Tier 2.4: which sample ids
+    // are currently assigned to the caller's focused track, so an
+    // already-assigned card can show "Remove" instead of "Add". Defaults to
+    // empty so the old timeline screen's call site (which has no assignment
+    // concept -- onAdd there always means "place a loop block") is
+    // completely unaffected: every card there keeps showing "Add", exactly
+    // today's behavior.
+    assignedSampleIds: Set<String> = emptySet()
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -106,7 +114,8 @@ fun LoopLibraryBottomSheet(
                     selectedTrackSlot = selectedTrackSlot,
                     onPreview = onPreview,
                     onAdd = onAdd,
-                    onImport = onImport
+                    onImport = onImport,
+                    assignedSampleIds = assignedSampleIds
                 )
             }
             Spacer(Modifier.height(16.dp))
@@ -131,7 +140,9 @@ fun LoopLibraryContent(
     selectedTrackSlot: Int?,
     onPreview: (Sample) -> Unit,
     onAdd: (Sample) -> Unit,
-    onImport: (Uri) -> Unit
+    onImport: (Uri) -> Unit,
+    // See LoopLibraryBottomSheet's doc comment on the same parameter.
+    assignedSampleIds: Set<String> = emptySet()
 ) {
     var selectedCategory by remember { mutableStateOf<SampleCategory?>(null) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -194,6 +205,7 @@ fun LoopLibraryContent(
                 LoopLibraryCard(
                     sample = sample,
                     hasSelectedTrack = selectedTrackSlot != null,
+                    isAssigned = sample.id in assignedSampleIds,
                     onPreview = { onPreview(sample) },
                     onAdd = { onAdd(sample) }
                 )
@@ -245,6 +257,13 @@ fun LoopLibraryPanel(
 private fun LoopLibraryCard(
     sample: Sample,
     hasSelectedTrack: Boolean,
+    // Grid-sequencer redesign (2026-08-24 spec), Tier 2.4: false for every
+    // call site except the grid screen's own Sounds picker. When true, the
+    // single onAdd callback below is relabeled "Remove" -- the CALLER (not
+    // this card) decides what that tap actually means (replace/add/remove),
+    // exactly as it already decides everything else a tap on this button
+    // does; this card only ever renders what it's told.
+    isAssigned: Boolean = false,
     onPreview: () -> Unit,
     onAdd: () -> Unit
 ) {
@@ -309,14 +328,14 @@ private fun LoopLibraryCard(
                     onClick = onAdd,
                     modifier = Modifier
                         .semantics {
-                            contentDescription = if (hasSelectedTrack) {
-                                "Add ${sample.name} to track"
-                            } else {
-                                "Add ${sample.name}. Select a track on the timeline first."
+                            contentDescription = when {
+                                isAssigned -> "Remove ${sample.name} from track"
+                                hasSelectedTrack -> "Add ${sample.name} to track"
+                                else -> "Add ${sample.name}. Select a track on the timeline first."
                             }
                         }
-                        .testTag("add_loop_${sample.id}")
-                ) { Text("Add") }
+                        .testTag(if (isAssigned) "remove_loop_${sample.id}" else "add_loop_${sample.id}")
+                ) { Text(if (isAssigned) "Remove" else "Add") }
             }
         }
     }

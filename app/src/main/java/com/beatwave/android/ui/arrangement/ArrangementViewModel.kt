@@ -417,37 +417,109 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     // this class already uses -- real engine commit, real persistence, not
     // a UI-only mock.
 
-    /** No-op if [trackSlot] doesn't exist or has no assigned instrument yet
-     *  (Tier 1 doesn't support placing on an unassigned track -- the grid
-     *  screen shows the "choose an instrument" prompt instead of a grid in
-     *  that case, so this shouldn't normally be reachable, but staying safe
-     *  rather than crashing if it ever is). */
-    fun toggleGridCell(trackSlot: Int, gridColumn: Int, pitchRow: Int) {
+    /** No-op if [trackSlot] doesn't exist. A [GridCellTarget.PitchOffset]
+     *  target on a track with no assigned melodic sample, or a
+     *  [GridCellTarget.DrumSample] target naming a sample no longer in
+     *  the track's assignedSampleIds (e.g. removed via Sounds in the
+     *  instant between render and tap), also no-ops rather than placing
+     *  a block with no real instrument behind it -- the grid screen's own
+     *  row computation shouldn't normally make either reachable, but
+     *  staying safe rather than crashing if it ever is. */
+    internal fun toggleGridCell(trackSlot: Int, gridColumn: Int, target: GridCellTarget) {
         val project = _uiState.value.project ?: return
         val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
-        val sampleId = track.assignedSampleIds.firstOrNull() ?: return
 
-        val existingBlock = track.loopBlocks.firstOrNull {
-            it.startGridUnit == gridColumn && it.pitchRow == pitchRow
+        val existingBlock = when (target) {
+            is GridCellTarget.PitchOffset -> track.loopBlocks.firstOrNull {
+                it.startGridUnit == gridColumn && it.pitchRow == target.semitones
+            }
+            is GridCellTarget.DrumSample -> track.loopBlocks.firstOrNull {
+                it.startGridUnit == gridColumn && it.pitchRow == null && it.sampleId == target.sampleId
+            }
         }
         if (existingBlock != null) {
             deleteBlock(trackSlot, existingBlock.id)
             return
         }
 
-        val newBlock = LoopBlock(
-            id = UUID.randomUUID().toString(),
-            sampleId = sampleId,
-            startGridUnit = gridColumn,
-            lengthGridUnits = 1,
-            // A melodic track's row IS its semitone offset directly (see
-            // LoopBlock.pitchRow's doc comment) -- no separate row-index
-            // lookup needed.
-            pitchSemitones = pitchRow.toFloat(),
-            pitchRow = pitchRow
-        )
+        val newBlock = when (target) {
+            is GridCellTarget.PitchOffset -> {
+                val sampleId = track.assignedSampleIds.firstOrNull() ?: return
+                LoopBlock(
+                    id = UUID.randomUUID().toString(),
+                    sampleId = sampleId,
+                    startGridUnit = gridColumn,
+                    lengthGridUnits = 1,
+                    // A melodic track's row IS its semitone offset directly
+                    // (see LoopBlock.pitchRow's doc comment) -- no separate
+                    // row-index lookup needed.
+                    pitchSemitones = target.semitones.toFloat(),
+                    pitchRow = target.semitones
+                )
+            }
+            is GridCellTarget.DrumSample -> {
+                if (target.sampleId !in track.assignedSampleIds) return
+                LoopBlock(
+                    id = UUID.randomUUID().toString(),
+                    sampleId = target.sampleId,
+                    startGridUnit = gridColumn,
+                    lengthGridUnits = 1,
+                    pitchSemitones = 0f,
+                    // A drum-track block's row IS its sampleId, not a pitch
+                    // offset -- pitchRow stays null (see its doc comment).
+                    pitchRow = null
+                )
+            }
+        }
         val newTracks = project.tracks.map { t ->
             if (t.slot == trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
+        }
+        rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
+    }
+
+    // --- Grid screen: Sounds picker wiring (Tier 2.4) ---
+
+    /** Melodic track: the Sounds picker's "Add" REPLACES assignedSampleIds
+     *  with this one sample. Existing LoopBlocks on the track are left
+     *  completely untouched -- only the track's instrument assignment
+     *  changes, so they now play the newly-assigned sample at whatever
+     *  pitchRow they already had (per the spec's non-destructive-
+     *  reassignment rule). No-op if trackSlot doesn't exist or this sample
+     *  is already the sole assignment. */
+    internal fun assignSampleToTrack(trackSlot: Int, sampleId: String) {
+        val project = _uiState.value.project ?: return
+        val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
+        if (track.assignedSampleIds == listOf(sampleId)) return
+        val newTracks = project.tracks.map { t ->
+            if (t.slot == trackSlot) t.copy(assignedSampleIds = listOf(sampleId)) else t
+        }
+        rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
+    }
+
+    /** Drum track: the Sounds picker's "Add" ADDS to assignedSampleIds
+     *  (append, preserving existing order -- DrumGrid renders rows in this
+     *  list's order). Idempotent: no-ops if already assigned. */
+    internal fun addSampleToTrack(trackSlot: Int, sampleId: String) {
+        val project = _uiState.value.project ?: return
+        val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
+        if (sampleId in track.assignedSampleIds) return
+        val newTracks = project.tracks.map { t ->
+            if (t.slot == trackSlot) t.copy(assignedSampleIds = t.assignedSampleIds + sampleId) else t
+        }
+        rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
+    }
+
+    /** Drum track: the Sounds picker's "Remove" takes sampleId OUT of
+     *  assignedSampleIds. Deliberately does NOT touch track.loopBlocks --
+     *  any LoopBlock already placed on that sample's row is left exactly as
+     *  it is (the spec's "never silently delete placed data" rule; see
+     *  DrumGrid's row computation for how an orphaned row stays visible). */
+    internal fun removeSampleFromTrack(trackSlot: Int, sampleId: String) {
+        val project = _uiState.value.project ?: return
+        val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
+        if (sampleId !in track.assignedSampleIds) return
+        val newTracks = project.tracks.map { t ->
+            if (t.slot == trackSlot) t.copy(assignedSampleIds = t.assignedSampleIds - sampleId) else t
         }
         rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
     }

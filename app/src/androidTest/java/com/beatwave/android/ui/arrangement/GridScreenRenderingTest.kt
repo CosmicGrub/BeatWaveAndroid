@@ -18,10 +18,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Tier 1.1 (grid-sequencer redesign, 2026-08-24 implementation plan) exit
- * criterion: correct row labels/count and existing (migrated) blocks
- * rendering at the right position for a melodic track, plus the
- * unassigned/not-yet-supported prompt states.
+ * Tier 1.1 exit criterion (grid-sequencer redesign, 2026-08-24
+ * implementation plan): correct row labels/count and existing (migrated)
+ * blocks rendering at the right position for a melodic track, plus the
+ * unassigned/not-yet-supported prompt states. Also covers Tier 2.1's own
+ * exit criterion: a multi-row drum kit rendering one named row per
+ * assigned sample, in order, with an existing block at the right cell.
  *
  * Hosts [GridScreen] directly via `createAndroidComposeRule<ComponentActivity>`
  * -- [GridScreen] isn't wired into `MainActivity`'s real navigation until
@@ -86,15 +88,38 @@ class GridScreenRenderingTest {
     }
 
     @Test
-    fun drumAssignedTrack_showsNotYetSupportedPrompt() {
+    fun mixedAssignedTrack_showsNotYetSupportedPrompt() {
+        composeTestRule.setContent { GridScreen() }
+        composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithTag("track_pill_4").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("track_pill_4").performClick()
+        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithTag("grid_not_yet_supported_prompt").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun drumKitTrack_rendersOneRowPerAssignedSample_inOrder_withExistingBlock() {
         composeTestRule.setContent { GridScreen() }
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("track_pill_3").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("track_pill_3").performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("grid_not_yet_supported_prompt").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("grid_drum_canvas").fetchSemanticsNodes().isNotEmpty()
         }
+
+        // Two rows, one per assigned sample, in assignedSampleIds order.
+        composeTestRule.onNodeWithTag("grid_row_label_$KICK_SAMPLE_ID").assertExists()
+        composeTestRule.onNodeWithTag("grid_row_label_$SNARE_SAMPLE_ID").assertExists()
+
+        // The fixture's existing block (column=5, kick row) renders filled;
+        // the snare row at the same column does not.
+        composeTestRule.onNodeWithTag("grid_cell_5_$KICK_SAMPLE_ID")
+            .assertContentDescriptionContains("Filled", substring = true)
+        composeTestRule.onNodeWithTag("grid_cell_5_$SNARE_SAMPLE_ID")
+            .assertContentDescriptionContains("Empty", substring = true)
     }
 
     private fun fixtureProject(): Project = Project(
@@ -121,9 +146,24 @@ class GridScreenRenderingTest {
             ),
             // Track 2: unassigned.
             Track(slot = 2),
-            // Track 3: DRUMS-assigned -- Tier 1's "not yet supported" case.
-            Track(slot = 3, assignedSampleIds = listOf(KICK_SAMPLE_ID))
-        ) + (4..8).map { slot -> Track(slot = slot) },
+            // Track 3: drum kit (Tier 2.1) -- two rows, kick then snare, one
+            // existing block on the kick row.
+            Track(
+                slot = 3,
+                loopBlocks = listOf(
+                    LoopBlock(
+                        id = "existing-drum-block",
+                        sampleId = KICK_SAMPLE_ID,
+                        startGridUnit = 5,
+                        lengthGridUnits = 1,
+                        pitchRow = null
+                    )
+                ),
+                assignedSampleIds = listOf(KICK_SAMPLE_ID, SNARE_SAMPLE_ID)
+            ),
+            // Track 4: mixed melodic+drum assignment -- "not yet supported".
+            Track(slot = 4, assignedSampleIds = listOf(BASS_SAMPLE_ID, KICK_SAMPLE_ID))
+        ) + (5..8).map { slot -> Track(slot = slot) },
         createdAtEpochMs = 0L,
         modifiedAtEpochMs = 0L
     )
@@ -135,6 +175,7 @@ class GridScreenRenderingTest {
         // (app/src/main/assets/loops/manifest.json).
         private const val BASS_SAMPLE_ID = "bass_riff_01" // BASS
         private const val KICK_SAMPLE_ID = "kick_basic_01" // DRUMS
+        private const val SNARE_SAMPLE_ID = "snare_basic_01" // DRUMS
 
         private const val INIT_TIMEOUT_MS = 15_000L
         private const val LIBRARY_TIMEOUT_MS = 8_000L

@@ -53,8 +53,10 @@ class GridScreenInteractionTest {
                 id = PROJECT_ID,
                 name = "Grid Interaction Test",
                 bpm = 120,
-                tracks = listOf(Track(slot = 1, assignedSampleIds = listOf(BASS_SAMPLE_ID))) +
-                    (2..8).map { slot -> Track(slot = slot) },
+                tracks = listOf(
+                    Track(slot = 1, assignedSampleIds = listOf(BASS_SAMPLE_ID)),
+                    Track(slot = 2, assignedSampleIds = listOf(KICK_SAMPLE_ID, SNARE_SAMPLE_ID))
+                ) + (3..8).map { slot -> Track(slot = slot) },
                 createdAtEpochMs = 0L,
                 modifiedAtEpochMs = 0L
             )
@@ -123,6 +125,30 @@ class GridScreenInteractionTest {
         }
     }
 
+    @Test
+    fun tapEmptyDrumCell_placesRealBlock_thenSecondTapDeletesIt() {
+        composeTestRule.setContent { GridScreen() }
+        composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithTag("track_pill_2").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("track_pill_2").performClick()
+        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithTag("grid_drum_canvas").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val kickCell = "grid_cell_7_$KICK_SAMPLE_ID"
+        val snareCell = "grid_cell_7_$SNARE_SAMPLE_ID"
+
+        composeTestRule.onNodeWithTag(kickCell).performClick()
+        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) { nodeReportsFilled(kickCell) }
+        // The same column on the OTHER row must stay empty -- proves the
+        // placement is keyed by sampleId, not just column.
+        assertTrue("expected the snare row's same column to stay empty", !nodeReportsFilled(snareCell))
+
+        composeTestRule.onNodeWithTag(kickCell).performClick()
+        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) { !nodeReportsFilled(kickCell) }
+    }
+
     /** True once [testTag]'s node exists and its content description says
      *  "Filled" -- a non-throwing check, safe to poll from inside
      *  [androidx.compose.ui.test.junit4.ComposeTestRule.waitUntil]. */
@@ -135,6 +161,8 @@ class GridScreenInteractionTest {
     companion object {
         private const val PROJECT_ID = "current"
         private const val BASS_SAMPLE_ID = "bass_riff_01" // BASS
+        private const val KICK_SAMPLE_ID = "kick_basic_01" // DRUMS
+        private const val SNARE_SAMPLE_ID = "snare_basic_01" // DRUMS
 
         private const val INIT_TIMEOUT_MS = 15_000L
         private const val LIBRARY_TIMEOUT_MS = 8_000L
