@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -247,57 +248,76 @@ private fun LoopLibraryCard(
     onPreview: () -> Unit,
     onAdd: () -> Unit
 ) {
+    // Device-adaptive layouts (2026-08-18 spec), Phase 1: originally a
+    // single Row cramming a swatch + name/category + two text-labeled
+    // buttons into one line -- fine at full phone-sheet width, but
+    // discovered on real Tab S9 FE and Fold 5 hardware to wrap the name
+    // and even the "Add" button's own label down to one character per
+    // line in the narrower two-pane panel (~34% of the screen). Split
+    // into two rows instead of introducing icon buttons (this app has no
+    // icon-button precedent anywhere, and no material-icons dependency
+    // today -- text-only buttons are this project's established
+    // convention) so the name/category row gets the card's FULL width to
+    // itself, uncontested by the buttons. Applied uniformly to both the
+    // sheet and panel contexts (not conditioned on width) to match this
+    // codebase's existing preference for one shared layout over
+    // per-context special-casing -- the modest extra vertical height per
+    // card is an acceptable, deliberate trade against a real hard-to-read
+    // regression that only appeared on hardware wider single-row testing
+    // never exercised.
     Card(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                Modifier
-                    .size(12.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(CategoryColors.forCategory(sample.category))
-            )
-            Spacer(Modifier.width(12.dp))
-            // Post-v1 audit A4: without merging, TalkBack announces the
-            // name and category as two disconnected stops.
-            Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
-                Text(sample.name, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    sample.category.name,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(12.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(CategoryColors.forCategory(sample.category))
                 )
+                Spacer(Modifier.width(12.dp))
+                // Post-v1 audit A4: without merging, TalkBack announces the
+                // name and category as two disconnected stops.
+                Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
+                    Text(sample.name, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        sample.category.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            // Post-v1 audit A4: in a scrolling list of many cards, a bare
-            // "Preview"/"Add" announcement gives no indication which loop a
-            // given button targets without backing up to re-hear the name.
-            TextButton(
-                onClick = onPreview,
-                modifier = Modifier
-                    .semantics { contentDescription = "Preview ${sample.name}" }
-                    .testTag("preview_loop_${sample.id}")
-            ) {
-                Text("Preview")
-            }
-            // Found during this audit's adversarial-review pass: the plain
-            // "Add {name} to track" description gave no non-visual signal
-            // that tapping Add will no-op when no track is selected yet --
-            // the sighted-only hint above the list ("Select a track on the
-            // timeline first") is a separate, easily-scrolled-away stop not
-            // wired into each card's own Add button.
-            Button(
-                onClick = onAdd,
-                modifier = Modifier
-                    .semantics {
-                        contentDescription = if (hasSelectedTrack) {
-                            "Add ${sample.name} to track"
-                        } else {
-                            "Add ${sample.name}. Select a track on the timeline first."
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                // Post-v1 audit A4: in a scrolling list of many cards, a bare
+                // "Preview"/"Add" announcement gives no indication which loop a
+                // given button targets without backing up to re-hear the name.
+                TextButton(
+                    onClick = onPreview,
+                    modifier = Modifier
+                        .semantics { contentDescription = "Preview ${sample.name}" }
+                        .testTag("preview_loop_${sample.id}")
+                ) {
+                    Text("Preview")
+                }
+                // Found during this audit's adversarial-review pass: the plain
+                // "Add {name} to track" description gave no non-visual signal
+                // that tapping Add will no-op when no track is selected yet --
+                // the sighted-only hint above the list ("Select a track on the
+                // timeline first") is a separate, easily-scrolled-away stop not
+                // wired into each card's own Add button.
+                Button(
+                    onClick = onAdd,
+                    modifier = Modifier
+                        .semantics {
+                            contentDescription = if (hasSelectedTrack) {
+                                "Add ${sample.name} to track"
+                            } else {
+                                "Add ${sample.name}. Select a track on the timeline first."
+                            }
                         }
-                    }
-                    .testTag("add_loop_${sample.id}")
-            ) { Text("Add") }
+                        .testTag("add_loop_${sample.id}")
+                ) { Text("Add") }
+            }
         }
     }
 }

@@ -56,9 +56,10 @@ against each phase's diff before its commit.
   2560×1600.
 - Stereo pan test (hard-left/hard-right tone) confirming genuine stereo
   output, not a silent downmix, on the Atmos-branded speakers.
-- 120Hz refresh-rate confirmation (unresolved by research) and playhead/
-  timeline-scroll animation smoothness check at whatever the real rate
-  turns out to be.
+- Refresh-rate confirmation and playhead/timeline-scroll animation
+  smoothness check at the real rate. Confirmed via `dumpsys display`:
+  the Tab S9 FE's real max refresh rate is 90Hz, not 120Hz as originally
+  assumed (never actually confirmed by the design spec's own research).
 - **Exit criteria**: real on-device screenshots plus genuine interaction
   (not a Compose preview) confirming the two-pane layout, touch targets,
   stereo pan test, and animation smoothness all pass on serial
