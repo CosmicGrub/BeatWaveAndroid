@@ -402,6 +402,56 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
     }
 
+    // --- Grid-sequencer redesign (2026-08-24 spec), Tier 1 (walking
+    // skeleton) ---
+    //
+    // A single tap on the new grid screen either PLACES or DELETES a block
+    // at the tapped (gridColumn, pitchRow) cell, depending on whether one's
+    // already there -- one function, not two, so the "is this cell
+    // occupied" check lives in exactly one place rather than being
+    // duplicated between a hypothetical placeAt/deleteAt pair. Tier 1 scope
+    // only: always a fixed 1-grid-unit block (drag-to-stretch is Tier 2's
+    // 2.2), melodic tracks only (a track's one assignedSampleIds entry --
+    // Tier 2.1 adds real drum-kit multi-sample support). Routed through the
+    // exact same rebuildAndPersist path every other project mutation in
+    // this class already uses -- real engine commit, real persistence, not
+    // a UI-only mock.
+
+    /** No-op if [trackSlot] doesn't exist or has no assigned instrument yet
+     *  (Tier 1 doesn't support placing on an unassigned track -- the grid
+     *  screen shows the "choose an instrument" prompt instead of a grid in
+     *  that case, so this shouldn't normally be reachable, but staying safe
+     *  rather than crashing if it ever is). */
+    fun toggleGridCell(trackSlot: Int, gridColumn: Int, pitchRow: Int) {
+        val project = _uiState.value.project ?: return
+        val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
+        val sampleId = track.assignedSampleIds.firstOrNull() ?: return
+
+        val existingBlock = track.loopBlocks.firstOrNull {
+            it.startGridUnit == gridColumn && it.pitchRow == pitchRow
+        }
+        if (existingBlock != null) {
+            deleteBlock(trackSlot, existingBlock.id)
+            return
+        }
+
+        val newBlock = LoopBlock(
+            id = UUID.randomUUID().toString(),
+            sampleId = sampleId,
+            startGridUnit = gridColumn,
+            lengthGridUnits = 1,
+            // A melodic track's row IS its semitone offset directly (see
+            // LoopBlock.pitchRow's doc comment) -- no separate row-index
+            // lookup needed.
+            pitchSemitones = pitchRow.toFloat(),
+            pitchRow = pitchRow
+        )
+        val newTracks = project.tracks.map { t ->
+            if (t.slot == trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
+        }
+        rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
+    }
+
     // --- Loop block editing ---
 
     fun openBlockEditor(trackSlot: Int, blockId: String) {
