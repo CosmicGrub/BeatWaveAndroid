@@ -91,4 +91,33 @@ object GridConstants {
             kotlin.math.ceil(sampleDurationMs.toDouble() / msPerGridUnit).toInt().coerceAtLeast(1)
         return (oneRepeatGridUnits * DEFAULT_LOOP_REPEATS).coerceAtLeast(GRID_UNITS_PER_BEAT)
     }
+
+    // --- Grid-sequencer redesign (2026-08-24 spec), Tier 2.2: drag-to-
+    // stretch placement math. Kept here rather than in ArrangementViewModel
+    // for the same reason as every other function in this object: pure,
+    // primitive-typed, directly unit-testable without a Compose/ViewModel
+    // harness -- see GridConstantsTest.
+
+    /** Clamps a drag-to-stretch block's length so it never overlaps an
+     *  already-occupied cell on the same row. [occupiedStartGridUnits] are
+     *  that row's OTHER existing blocks' own start columns (the caller
+     *  pre-filters to one row -- this function stays dependency-free of the
+     *  data.model domain, same as every other function here). Only the
+     *  nearest occupied start STRICTLY AHEAD of [dragStartGridUnit] can
+     *  clamp it; anything at or behind the drag's own start is irrelevant.
+     *  Always returns at least 1 (never a degenerate/zero-length block),
+     *  even for a drag released with no real forward movement. */
+    fun clampStretchLength(
+        occupiedStartGridUnits: Collection<Int>,
+        dragStartGridUnit: Int,
+        desiredEndGridUnitExclusive: Int
+    ): Int {
+        val nearestOccupiedAhead = occupiedStartGridUnits.filter { it > dragStartGridUnit }.minOrNull()
+        val clampedEnd = if (nearestOccupiedAhead != null) {
+            minOf(desiredEndGridUnitExclusive, nearestOccupiedAhead)
+        } else {
+            desiredEndGridUnitExclusive
+        }
+        return (clampedEnd - dragStartGridUnit).coerceAtLeast(1)
+    }
 }

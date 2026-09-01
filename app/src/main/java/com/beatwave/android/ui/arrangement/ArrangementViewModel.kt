@@ -430,11 +430,19 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
 
         val existingBlock = when (target) {
+            // Span-aware, not an exact startGridUnit match: Tier 2.2's
+            // drag-to-stretch blocks can be >1 grid unit wide, and a tap
+            // anywhere within an existing block's span (not just its own
+            // start column) must find and delete the whole block, not
+            // silently fall through to placing a new 1-unit block on top
+            // of it.
             is GridCellTarget.PitchOffset -> track.loopBlocks.firstOrNull {
-                it.startGridUnit == gridColumn && it.pitchRow == target.semitones
+                it.pitchRow == target.semitones &&
+                    gridColumn in it.startGridUnit until (it.startGridUnit + it.lengthGridUnits)
             }
             is GridCellTarget.DrumSample -> track.loopBlocks.firstOrNull {
-                it.startGridUnit == gridColumn && it.pitchRow == null && it.sampleId == target.sampleId
+                it.pitchRow == null && it.sampleId == target.sampleId &&
+                    gridColumn in it.startGridUnit until (it.startGridUnit + it.lengthGridUnits)
             }
         }
         if (existingBlock != null) {
@@ -471,6 +479,40 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 )
             }
         }
+        val newTracks = project.tracks.map { t ->
+            if (t.slot == trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
+        }
+        rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
+    }
+
+    /** Tier 2.2: tap-and-drag from an empty melodic cell across
+     *  [desiredLength] columns places one stretched [LoopBlock], collision-
+     *  clamped via [GridConstants.clampStretchLength] against the nearest
+     *  already-occupied cell on the same row -- it can never overlap or
+     *  silently overwrite an existing block, matching how a real step-
+     *  sequencer grid behaves. Melodic tracks only: a drum one-shot hit has
+     *  no "stretch" concept (see GridScreen's own gating -- only
+     *  MelodicGrid's empty cells ever call this). Re-clamps here rather
+     *  than trusting the UI's own live-drag preview math, so this stays
+     *  correct even if it's ever called from somewhere other than the
+     *  exact gesture path that exists today. No-op if [trackSlot] doesn't
+     *  exist or has no assigned melodic sample, same as [toggleGridCell]. */
+    internal fun placeStretchedBlock(trackSlot: Int, gridColumn: Int, pitchRow: Int, desiredLength: Int) {
+        val project = _uiState.value.project ?: return
+        val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
+        val sampleId = track.assignedSampleIds.firstOrNull() ?: return
+
+        val occupiedStartsOnRow = track.loopBlocks.filter { it.pitchRow == pitchRow }.map { it.startGridUnit }
+        val length = GridConstants.clampStretchLength(occupiedStartsOnRow, gridColumn, gridColumn + desiredLength)
+
+        val newBlock = LoopBlock(
+            id = UUID.randomUUID().toString(),
+            sampleId = sampleId,
+            startGridUnit = gridColumn,
+            lengthGridUnits = length,
+            pitchSemitones = pitchRow.toFloat(),
+            pitchRow = pitchRow
+        )
         val newTracks = project.tracks.map { t ->
             if (t.slot == trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
         }

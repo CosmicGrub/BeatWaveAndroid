@@ -4,6 +4,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,11 +35,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -48,6 +53,7 @@ import com.beatwave.android.data.model.LoopBlock
 import com.beatwave.android.data.model.Sample
 import com.beatwave.android.data.model.SampleCategory
 import com.beatwave.android.data.model.Track
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // Grid-sequencer redesign (2026-08-24 spec). Tier 1 (Walking Skeleton)
@@ -191,6 +197,9 @@ private val CELL_WIDTH: Dp = 28.dp
 // is an accepted, deliberate limit for this tier, not attempted here.
 private val DRUM_ROW_LABEL_WIDTH: Dp = 96.dp
 
+// Tier 2.2: MelodicGrid's own ruler height (see HorizontalScrubStrip).
+private val SCRUB_STRIP_HEIGHT: Dp = 16.dp
+
 /**
  * Tier 1 entry point. Not yet reachable from the app's real navigation
  * (MainActivity still launches [ArrangementScreen]) -- hosted directly by
@@ -271,7 +280,10 @@ fun GridScreen(viewModel: ArrangementViewModel = viewModel()) {
                 onCellTap = { gridColumn, target ->
                     viewModel.toggleGridCell(focusedTrackSlot, gridColumn, target)
                 },
-                onLongPressBlock = { block -> viewModel.openBlockEditor(focusedTrackSlot, block.id) }
+                onLongPressBlock = { block -> viewModel.openBlockEditor(focusedTrackSlot, block.id) },
+                onStretchPlace = { gridColumn, pitchRow, length ->
+                    viewModel.placeStretchedBlock(focusedTrackSlot, gridColumn, pitchRow, length)
+                }
             )
         }
 
@@ -393,7 +405,8 @@ private fun GridBody(
     scaleSelection: ScaleType,
     playheadGridUnitPosition: Float?,
     onCellTap: (gridColumn: Int, target: GridCellTarget) -> Unit,
-    onLongPressBlock: (LoopBlock) -> Unit
+    onLongPressBlock: (LoopBlock) -> Unit,
+    onStretchPlace: (gridColumn: Int, pitchRow: Int, length: Int) -> Unit
 ) {
     when (gridTrackKind(track, samples)) {
         GridTrackKind.UNASSIGNED -> CenteredPrompt(
@@ -409,8 +422,15 @@ private fun GridBody(
             scaleSelection = scaleSelection,
             playheadGridUnitPosition = playheadGridUnitPosition,
             onCellTap = onCellTap,
-            onLongPressBlock = onLongPressBlock
+            onLongPressBlock = onLongPressBlock,
+            onStretchPlace = onStretchPlace
         )
+        // Tier 2.2 (drag-to-stretch) is melodic-only -- a drum one-shot hit
+        // has no "stretch" concept, so DrumGrid keeps its Tier 2.1 gesture
+        // surface (combinedClickable + direct-drag-to-pan on its own cells)
+        // completely unchanged; no scrub strip needed there either, since
+        // nothing on its cells competes with panning the way MelodicGrid's
+        // new stretch-drag does.
         GridTrackKind.DRUM_KIT -> DrumGrid(
             track = track,
             samples = samples,
@@ -428,26 +448,41 @@ private fun CenteredPrompt(text: String, testTag: String) {
     }
 }
 
+/** Tier 2.2: an in-progress drag-to-stretch gesture's live state, shared
+ *  across every row of [MelodicGrid] since only one drag can be active at
+ *  once. [currentColumn] never goes below [startColumn] -- backward
+ *  (leftward) drags are clamped to the start, not supported as a way to
+ *  grow a block backward (see the implementation plan's own scoping). */
+private data class DragPreview(val pitchRow: Int, val startColumn: Int, val currentColumn: Int)
+
 @Composable
 private fun MelodicGrid(
     track: Track,
     scaleSelection: ScaleType,
     playheadGridUnitPosition: Float?,
     onCellTap: (gridColumn: Int, target: GridCellTarget) -> Unit,
-    onLongPressBlock: (LoopBlock) -> Unit
+    onLongPressBlock: (LoopBlock) -> Unit,
+    onStretchPlace: (gridColumn: Int, pitchRow: Int, length: Int) -> Unit
 ) {
     val verticalScrollState = rememberScrollState()
     val horizontalScrollState = rememberScrollState()
+    var activeDrag by remember { mutableStateOf<DragPreview?>(null) }
 
-    // (gridColumn, pitchRow) -> the block occupying that exact cell, if
-    // any. Tier 1 blocks are always exactly 1 grid unit wide (no drag-to-
-    // stretch yet), so a block occupies exactly one cell -- O(1) lookup per
-    // cell while rendering, recomputed only when this track's blocks
-    // actually change. Keyed by the actual block (not just a filled
-    // boolean) since Tier 2.3's long-press needs the real block id.
+    // (gridColumn, pitchRow) -> the block covering that cell, if any.
+    // Tier 2.2: a block can now be >1 grid unit wide (drag-to-stretch), so
+    // EVERY column within a block's [startGridUnit, startGridUnit +
+    // lengthGridUnits) span maps to it, not just its own start column --
+    // both for rendering the whole span filled and so a tap/long-press
+    // anywhere within it resolves to the right block.
     val blocksByCell = remember(track.loopBlocks) {
-        track.loopBlocks.filter { it.pitchRow != null }
-            .associateBy { it.startGridUnit to it.pitchRow }
+        val map = mutableMapOf<Pair<Int, Int>, LoopBlock>()
+        for (block in track.loopBlocks) {
+            val row = block.pitchRow ?: continue
+            for (column in block.startGridUnit until block.startGridUnit + block.lengthGridUnits) {
+                map[column to row] = block
+            }
+        }
+        map
     }
 
     // Tier 2.5: show every row in the chosen scale, PLUS any row with an
@@ -460,36 +495,82 @@ private fun MelodicGrid(
     }
 
     Box(Modifier.fillMaxSize()) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(verticalScrollState)
-                .testTag("grid_melodic_canvas")
-        ) {
-            for (row in rows) {
-                Row(Modifier.height(ROW_HEIGHT)) {
-                    Box(
-                        Modifier.width(ROW_LABEL_WIDTH).fillMaxHeight(),
-                        contentAlignment = Alignment.CenterEnd
-                    ) {
-                        Text(
-                            "${if (row >= 0) "+" else ""}$row",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(end = 4.dp).testTag("grid_row_label_$row")
-                        )
-                    }
-                    // Shared horizontalScrollState across every row -- all
-                    // rows scroll together, same technique ArrangementScreen's
-                    // own TrackRow already established for the old timeline.
-                    Row(Modifier.horizontalScroll(horizontalScrollState)) {
-                        for (column in 0 until GRID_COLUMNS) {
-                            val block = blocksByCell[column to row]
-                            GridCell(
-                                filled = block != null,
-                                onTap = { onCellTap(column, GridCellTarget.PitchOffset(row)) },
-                                onLongPress = block?.let { b -> { onLongPressBlock(b) } },
-                                testTag = "grid_cell_${column}_$row"
+        Column(Modifier.fillMaxSize()) {
+            // Tier 2.2: horizontal panning moves here -- any drag directly
+            // on a grid cell now means stretch-place instead (see each
+            // row's Row below, horizontalScroll(..., enabled = false)).
+            HorizontalScrubStrip(horizontalScrollState)
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(verticalScrollState)
+                    .testTag("grid_melodic_canvas")
+            ) {
+                for (row in rows) {
+                    Row(Modifier.height(ROW_HEIGHT)) {
+                        Box(
+                            Modifier.width(ROW_LABEL_WIDTH).fillMaxHeight(),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Text(
+                                "${if (row >= 0) "+" else ""}$row",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(end = 4.dp).testTag("grid_row_label_$row")
                             )
+                        }
+                        // enabled = false: the scroll POSITION still applies
+                        // (driven by the shared horizontalScrollState, moved
+                        // by HorizontalScrubStrip's own drag above), but this
+                        // Row no longer recognizes a direct drag on its own
+                        // content as a pan gesture -- that gesture now
+                        // belongs to GridCell's stretch-drag handling below.
+                        Row(Modifier.horizontalScroll(horizontalScrollState, enabled = false)) {
+                            for (column in 0 until GRID_COLUMNS) {
+                                val block = blocksByCell[column to row]
+                                // Known, accepted limitation: this live
+                                // preview shows the RAW drag extent, not
+                                // collision-clamped against an existing
+                                // block the way the actual commit (via
+                                // ArrangementViewModel.placeStretchedBlock,
+                                // GridConstants.clampStretchLength) always
+                                // is -- dragging past an existing block
+                                // previews a longer span than what will
+                                // actually be placed. Harmless (an existing
+                                // block's own cell already renders filled
+                                // regardless), just a cosmetic rough edge
+                                // during the drag itself, not at rest.
+                                val previewed = activeDrag?.let {
+                                    it.pitchRow == row && column in it.startColumn..it.currentColumn
+                                } ?: false
+                                GridCell(
+                                    filled = block != null || previewed,
+                                    onTap = { onCellTap(column, GridCellTarget.PitchOffset(row)) },
+                                    onLongPress = block?.let { b -> { onLongPressBlock(b) } },
+                                    stretchDrag = if (block == null) {
+                                        StretchDragHandlers(
+                                            onDragStart = { activeDrag = DragPreview(row, column, column) },
+                                            onDragUpdate = { deltaColumns ->
+                                                activeDrag = activeDrag?.copy(
+                                                    currentColumn = (column + deltaColumns).coerceAtLeast(column)
+                                                )
+                                            },
+                                            onDragEnd = {
+                                                activeDrag?.let { drag ->
+                                                    onStretchPlace(
+                                                        drag.startColumn,
+                                                        drag.pitchRow,
+                                                        drag.currentColumn - drag.startColumn + 1
+                                                    )
+                                                }
+                                                activeDrag = null
+                                            }
+                                        )
+                                    } else {
+                                        null
+                                    },
+                                    testTag = "grid_cell_${column}_$row"
+                                )
+                            }
                         }
                     }
                 }
@@ -497,6 +578,41 @@ private fun MelodicGrid(
         }
         if (playheadGridUnitPosition != null) {
             PlayheadOverlay(playheadGridUnitPosition, horizontalScrollState, ROW_LABEL_WIDTH)
+        }
+    }
+}
+
+/**
+ * Tier 2.2: a lightweight ruler -- one tick per grid column, a taller tick
+ * every [GridConstants.GRID_UNITS_PER_BEAT] columns (a full beat) -- that
+ * drives [MelodicGrid]'s horizontal panning via its own drag gesture,
+ * reusing [horizontalScrollState] so its content shifts the grid rows
+ * below in lockstep. Exists because the grid's own cells now use a direct
+ * drag to mean stretch-place instead (see the row Modifier in
+ * [MelodicGrid] with `horizontalScroll(..., enabled = false)`); this is
+ * the deliberate resolution to that gesture conflict, decided explicitly
+ * rather than guessed.
+ */
+@Composable
+private fun HorizontalScrubStrip(horizontalScrollState: ScrollState) {
+    Row(Modifier.fillMaxWidth().padding(start = ROW_LABEL_WIDTH)) {
+        Row(
+            Modifier
+                .horizontalScroll(horizontalScrollState)
+                .testTag("grid_scrub_strip")
+        ) {
+            for (column in 0 until GRID_COLUMNS) {
+                Box(Modifier.width(CELL_WIDTH).height(SCRUB_STRIP_HEIGHT), contentAlignment = Alignment.BottomCenter) {
+                    val tall = column % GridConstants.GRID_UNITS_PER_BEAT == 0
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 1.dp)
+                            .height(if (tall) SCRUB_STRIP_HEIGHT else SCRUB_STRIP_HEIGHT / 2)
+                            .background(MaterialTheme.colorScheme.outline)
+                    )
+                }
+            }
         }
     }
 }
@@ -570,6 +686,7 @@ private fun DrumGrid(
                                 filled = block != null,
                                 onTap = { onCellTap(column, GridCellTarget.DrumSample(sampleId)) },
                                 onLongPress = block?.let { b -> { onLongPressBlock(b) } },
+                                stretchDrag = null, // Tier 2.2 is melodic-only
                                 testTag = "grid_cell_${column}_$sampleId"
                             )
                         }
@@ -613,9 +730,24 @@ private fun PlayheadOverlay(gridUnitPosition: Float, horizontalScrollState: Scro
     )
 }
 
+/** Tier 2.2: [onDragStart]/[onDragUpdate]/[onDragEnd] for an empty
+ *  melodic cell's drag-to-stretch gesture -- all three fire together
+ *  (never a subset), see [tapOrDragToStretch]. */
+private class StretchDragHandlers(
+    val onDragStart: () -> Unit,
+    val onDragUpdate: (deltaColumns: Int) -> Unit,
+    val onDragEnd: () -> Unit
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GridCell(filled: Boolean, onTap: () -> Unit, onLongPress: (() -> Unit)?, testTag: String) {
+private fun GridCell(
+    filled: Boolean,
+    onTap: () -> Unit,
+    onLongPress: (() -> Unit)?,
+    stretchDrag: StretchDragHandlers?,
+    testTag: String
+) {
     Box(
         Modifier
             .width(CELL_WIDTH)
@@ -624,7 +756,13 @@ private fun GridCell(filled: Boolean, onTap: () -> Unit, onLongPress: (() -> Uni
             .clip(RoundedCornerShape(3.dp))
             .background(if (filled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
             .testTag(testTag)
-            .combinedClickable(role = Role.Button, onClick = onTap, onLongClick = onLongPress)
+            .then(
+                if (stretchDrag != null) {
+                    Modifier.tapOrDragToStretch(onTap = onTap, handlers = stretchDrag)
+                } else {
+                    Modifier.combinedClickable(role = Role.Button, onClick = onTap, onLongClick = onLongPress)
+                }
+            )
             .semantics {
                 contentDescription = if (filled) {
                     "Filled cell, tap to remove, long-press to edit"
@@ -634,3 +772,74 @@ private fun GridCell(filled: Boolean, onTap: () -> Unit, onLongPress: (() -> Uni
             }
     )
 }
+
+/**
+ * Tier 2.2: a single gesture recognizer for an empty melodic cell,
+ * replacing [combinedClickable] there -- deliberately NOT stacked
+ * alongside a second, independent pointerInput block (Tier 2.3's own
+ * research explicitly flagged that risk: two gesture recognizers racing
+ * over the same event stream can starve or double-fire each other; see
+ * [GridCell]'s own branch between this and combinedClickable for how that
+ * risk is avoided -- exactly one recognizer per cell state, never both).
+ *
+ * A plain press-and-release that never exceeds touch slop means tap
+ * (delegates to [onTap] -- 100% unchanged behavior from Tier 1's original
+ * tap-to-place, verified by this project's own existing tests still
+ * passing unmodified). A press that moves past touch slop before
+ * releasing means drag-to-stretch, live-previewed via [handlers] and
+ * committed on release. A release that crossed slop by only a
+ * sub-cell-width amount naturally produces a 1-column "stretch" through
+ * [handlers]'s onDragEnd -- behaviorally identical to a plain tap, so no
+ * special-case fallback is needed for that edge case.
+ *
+ * `combinedClickable`/`clickable` register a real semantics OnClick
+ * action for free; a raw pointerInput block does not, so one is added by
+ * hand here -- otherwise `performClick()` in tests and TalkBack would
+ * both stop working for cells built on this gesture.
+ */
+private fun Modifier.tapOrDragToStretch(onTap: () -> Unit, handlers: StretchDragHandlers): Modifier =
+    this
+        .pointerInput(Unit) {
+            val cellWidthPx = CELL_WIDTH.toPx()
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                var dragging = false
+                var totalDx = 0f
+                var lastReportedDelta = 0
+                val slop = viewConfiguration.touchSlop
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!change.pressed) {
+                        if (dragging) handlers.onDragEnd() else onTap()
+                        break
+                    }
+                    totalDx += change.positionChange().x
+                    if (!dragging) {
+                        if (abs(totalDx) <= slop) continue
+                        // Crossing slop and this event's own delta being
+                        // large enough to represent real movement past a
+                        // whole cell width are NOT mutually exclusive --
+                        // e.g. a fast real drag, or any programmatic/test
+                        // touch injection that doesn't emit many small
+                        // incremental moves the way a slow physical finger
+                        // does, can deliver ONE event whose own delta both
+                        // crosses slop AND is the entire drag distance.
+                        // Falling through below (not `continue`ing here)
+                        // ensures that SAME event's delta still gets
+                        // reported as a drag update -- skipping it would
+                        // silently lose it, since the next event might be
+                        // the release with zero further movement.
+                        dragging = true
+                        handlers.onDragStart()
+                    }
+                    change.consume()
+                    val deltaColumns = (totalDx / cellWidthPx).toInt()
+                    if (deltaColumns != lastReportedDelta) {
+                        lastReportedDelta = deltaColumns
+                        handlers.onDragUpdate(deltaColumns)
+                    }
+                }
+            }
+        }
+        .semantics { onClick(label = "Place") { onTap(); true } }

@@ -163,6 +163,83 @@ class GridConstantsTest {
         assertTrue("expected long sample's default ($long) > short sample's ($short)", long > short)
     }
 
+    // --- clampStretchLength (Tier 2.2: grid-sequencer drag-to-stretch) ---
+
+    @Test
+    fun clampStretchLength_noCollision_usesTheDesiredLengthAsIs() {
+        // Drag from column 3 to (exclusive) column 7 -- desired length 4,
+        // nothing occupied anywhere on the row.
+        val result = GridConstants.clampStretchLength(
+            occupiedStartGridUnits = emptyList(),
+            dragStartGridUnit = 3,
+            desiredEndGridUnitExclusive = 7
+        )
+        assertEquals(4, result)
+    }
+
+    @Test
+    fun clampStretchLength_collisionAhead_clampsToStopJustBeforeIt() {
+        // Existing block starts at column 10. Dragging from column 3 toward
+        // column 20 must clamp to stop at column 10 (exclusive), i.e.
+        // length 7 (columns 3..9), never reaching or overlapping column 10.
+        val result = GridConstants.clampStretchLength(
+            occupiedStartGridUnits = listOf(10),
+            dragStartGridUnit = 3,
+            desiredEndGridUnitExclusive = 20
+        )
+        assertEquals(7, result)
+    }
+
+    @Test
+    fun clampStretchLength_usesTheNearestCollisionAhead_notJustAny() {
+        // Two blocks ahead, at columns 10 and 15 -- must clamp to the
+        // NEARER one (10), not the farther one.
+        val result = GridConstants.clampStretchLength(
+            occupiedStartGridUnits = listOf(15, 10),
+            dragStartGridUnit = 3,
+            desiredEndGridUnitExclusive = 20
+        )
+        assertEquals(7, result)
+    }
+
+    @Test
+    fun clampStretchLength_occupiedCellAtOrBehindDragStart_isIgnored() {
+        // A block starting AT or BEFORE the drag's own start column is
+        // irrelevant to this drag -- only strictly-ahead occupancy clamps.
+        val result = GridConstants.clampStretchLength(
+            occupiedStartGridUnits = listOf(3, 1),
+            dragStartGridUnit = 3,
+            desiredEndGridUnitExclusive = 8
+        )
+        assertEquals(5, result)
+    }
+
+    @Test
+    fun clampStretchLength_desiredEndAtOrBeforeStart_stillReturnsAtLeastOne() {
+        // A drag released with no real forward movement (or a backward
+        // drag already clamped to the start column by the caller) must
+        // never produce a zero/negative-length block.
+        val result = GridConstants.clampStretchLength(
+            occupiedStartGridUnits = emptyList(),
+            dragStartGridUnit = 5,
+            desiredEndGridUnitExclusive = 5
+        )
+        assertEquals(1, result)
+    }
+
+    @Test
+    fun clampStretchLength_immediatelyAdjacentCollision_clampsToLengthOne() {
+        // Existing block starts at the very next column -- the new block
+        // must still get its full column at the drag start (length 1), not
+        // be squeezed out entirely.
+        val result = GridConstants.clampStretchLength(
+            occupiedStartGridUnits = listOf(4),
+            dragStartGridUnit = 3,
+            desiredEndGridUnitExclusive = 10
+        )
+        assertEquals(1, result)
+    }
+
     companion object {
         private const val TOLERANCE = 0.0001
     }
