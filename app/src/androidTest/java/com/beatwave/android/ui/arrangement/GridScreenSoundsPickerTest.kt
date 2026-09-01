@@ -5,7 +5,9 @@ import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.beatwave.android.data.model.LoopBlock
@@ -88,17 +90,24 @@ class GridScreenSoundsPickerTest {
         composeTestRule.onNodeWithTag("grid_cell_2_4").assertContentDescriptionContains("Filled", substring = true)
 
         composeTestRule.onNodeWithTag("grid_sounds_button").performClick()
-        // FIRST_SHEET_OPEN_TIMEOUT_MS, not LIBRARY_TIMEOUT_MS: this is the
-        // Material3 ModalBottomSheet's very first composition/measurement/
-        // animation in this whole test class's process -- on real hardware,
-        // reproducibly slower than every LATER sheet-open in the same
-        // process (JIT/class-loading cold start). Every other
-        // LIBRARY_TIMEOUT_MS wait in this file/class happens after the
-        // sheet has already opened at least once earlier, and consistently
-        // clears 8s comfortably even under real concurrent device load.
-        composeTestRule.waitUntil(timeoutMillis = FIRST_SHEET_OPEN_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("add_loop_$SYNTH_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
+        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithTag("loop_library_card_list").fetchSemanticsNodes().isNotEmpty()
         }
+        // The bundled samples sort alphabetically by NAME ("Basic Kick",
+        // "Basic Snare", "Bass Riff One", "Bass Riff Two", "Synth Arp", ...)
+        // -- "Synth Arp" is the 5th of 8, genuinely outside the sheet's
+        // initial composed viewport (a 420dp-capped sheet only comfortably
+        // shows ~4 cards), unlike KICK_SAMPLE_ID (2nd) which every OTHER
+        // test in this file targets. onAllNodesWithTag can't find a node
+        // that was never composed in the first place -- a plain waitUntil
+        // here would poll forever, since nothing about the app's own state
+        // ever changes to make it appear on its own. performScrollToNode
+        // scrolls loop_library_card_list until the target IS composed, the
+        // same real-hardware gap this project's own history already found
+        // and fixed the same way for an off-screen loop-library card (see
+        // ImportedSampleArrangementTest/FullIntegrationWalkthroughTest).
+        composeTestRule.onNodeWithTag("loop_library_card_list")
+            .performScrollToNode(hasTestTag("add_loop_$SYNTH_SAMPLE_ID"))
         composeTestRule.onNodeWithTag("add_loop_$SYNTH_SAMPLE_ID").performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             // The sheet re-renders once assignedSampleIds updates -- the
@@ -193,9 +202,5 @@ class GridScreenSoundsPickerTest {
 
         private const val INIT_TIMEOUT_MS = 15_000L
         private const val LIBRARY_TIMEOUT_MS = 8_000L
-
-        // Only the very first sheet-open wait in this class needs this
-        // longer budget -- see the call site's own comment.
-        private const val FIRST_SHEET_OPEN_TIMEOUT_MS = 15_000L
     }
 }

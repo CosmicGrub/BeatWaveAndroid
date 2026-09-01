@@ -200,7 +200,7 @@ fun LoopLibraryContent(
         // sheet-tuned constant. The sheet wrapper above reproduces its own
         // 420.dp cap by bounding the whole LoopLibraryContent call instead.
         val filtered = samples.filter { selectedCategory == null || it.category == selectedCategory }
-        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("loop_library_card_list")) {
             items(filtered, key = { it.id }) { sample ->
                 LoopLibraryCard(
                     sample = sample,
