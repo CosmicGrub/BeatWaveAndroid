@@ -1399,14 +1399,50 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             )
             importedSampleIndex.add(sample)
 
+            // Grid-sequencer redesign (Tier 3): a recorded take needs the
+            // same instrument-assignment treatment the Sounds picker
+            // already gives an added sample (assignSampleToTrack/
+            // addSampleToTrack) -- recording predates the grid's kind
+            // concept entirely, and without this, a fresh recording on a
+            // still-unassigned track would leave assignedSampleIds empty
+            // while the new block's default pitchRow (null) makes
+            // gridTrackKind/drumKitRowSampleIds misread it as an orphaned
+            // drum note, likely landing on NOT_YET_SUPPORTED for a
+            // melodic-category recording -- and even if it somehow read
+            // as MELODIC, MelodicGrid only ever renders pitchRow != null
+            // blocks, so the just-recorded block would be real but
+            // invisible. Mirrors GridScreen's own onAdd dispatch logic:
+            // an already-drum-kit track (or an unassigned track recording
+            // a DRUMS-category take) adds this sample as another kit
+            // member with pitchRow left null (the drum convention);
+            // anything else (a melodic track, or an unassigned track
+            // recording a melodic-category take) replaces the track's
+            // assignment and gives the block pitchRow = 0 (the sample's
+            // own natural pitch) so it renders in MelodicGrid.
+            val track = project.tracks.first { it.slot == pending.trackSlot }
+            val isDrumBehavior = if (track.assignedSampleIds.isEmpty()) {
+                category == SampleCategory.DRUMS
+            } else {
+                track.assignedSampleIds.all { id -> _uiState.value.samples[id]?.category == SampleCategory.DRUMS }
+            }
             val newBlock = LoopBlock(
                 id = UUID.randomUUID().toString(),
                 sampleId = sample.id,
                 startGridUnit = pending.startGridUnit,
-                lengthGridUnits = pending.lengthGridUnits
+                lengthGridUnits = pending.lengthGridUnits,
+                pitchRow = if (isDrumBehavior) null else 0
             )
+            val newAssignedSampleIds = if (isDrumBehavior) {
+                if (sample.id in track.assignedSampleIds) track.assignedSampleIds else track.assignedSampleIds + sample.id
+            } else {
+                listOf(sample.id)
+            }
             val newTracks = project.tracks.map { t ->
-                if (t.slot == pending.trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
+                if (t.slot == pending.trackSlot) {
+                    t.copy(loopBlocks = t.loopBlocks + newBlock, assignedSampleIds = newAssignedSampleIds)
+                } else {
+                    t
+                }
             }
             val newProject = project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis())
 

@@ -513,8 +513,13 @@ fun ArrangementScreen(
     }
 }
 
+// Tier 3 (grid-sequencer cutover): widened from private to internal so
+// GridScreen.kt can reuse this composable as-is, per the implementation
+// plan's own explicit instruction ("Do not remove... PlaybackControlBar...
+// all explicitly reused per the spec"). No behavior change to
+// ArrangementScreen itself.
 @Composable
-private fun PlaybackControlBar(
+internal fun PlaybackControlBar(
     isPlaying: Boolean,
     isRecording: Boolean,
     currentFrame: Long,
@@ -598,7 +603,9 @@ private fun PlaybackControlBar(
     }
 }
 
-private fun formatPosition(frame: Long, sampleRate: Int): String {
+// Tier 3: widened to internal -- shared by PlaybackControlBar/
+// RecordAffordance here AND GridScreen.kt's reuse of both.
+internal fun formatPosition(frame: Long, sampleRate: Int): String {
     if (sampleRate <= 0) return "0:00"
     val totalSeconds = frame / sampleRate.toLong()
     val minutes = totalSeconds / 60
@@ -831,8 +838,11 @@ private fun TrackRow(
  * the user can see why -- the native engine supports only one recording at
  * a time.
  */
+// Tier 3: widened to internal so GridScreen.kt can reuse this exact,
+// already-accessibility-audited (Post-v1 A4) affordance for the focused
+// track's own Record control, rather than re-authoring it.
 @Composable
-private fun RecordAffordance(
+internal fun RecordAffordance(
     trackSlot: Int,
     isRecording: Boolean,
     isDisabled: Boolean,

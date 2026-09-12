@@ -1,8 +1,16 @@
 package com.beatwave.android.ui.arrangement
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -16,17 +24,25 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -47,12 +64,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.beatwave.android.audio.GridConstants
 import com.beatwave.android.data.model.LoopBlock
 import com.beatwave.android.data.model.Sample
 import com.beatwave.android.data.model.SampleCategory
 import com.beatwave.android.data.model.Track
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -66,7 +86,10 @@ import kotlin.math.roundToInt
 // direct composable hosting (createAndroidComposeRule<ComponentActivity>()),
 // matching the pattern this project's own Phase 3 S-Pen work established.
 
-private val MELODIC_CATEGORIES = setOf(SampleCategory.BASS, SampleCategory.SYNTH, SampleCategory.VOCAL)
+// Tier 3: widened to internal so ArrangementViewModel.confirmPendingRecording
+// can classify a freshly-recorded sample's category the same way
+// gridTrackKind does, without duplicating this set.
+internal val MELODIC_CATEGORIES = setOf(SampleCategory.BASS, SampleCategory.SYNTH, SampleCategory.VOCAL)
 
 /** What kind of grid [gridTrackKind] should render for a given track. */
 internal enum class GridTrackKind {
@@ -201,13 +224,132 @@ private val DRUM_ROW_LABEL_WIDTH: Dp = 96.dp
 private val SCRUB_STRIP_HEIGHT: Dp = 16.dp
 
 /**
- * Tier 1 entry point. Not yet reachable from the app's real navigation
- * (MainActivity still launches [ArrangementScreen]) -- hosted directly by
- * this tier's own instrumented tests instead.
+ * Tier 3 entry point: the real, active screen -- [MainActivity] launches
+ * this directly. Everything ArrangementScreen's own top-level composable
+ * used to wire up (permission flows, Snackbar messages, export/crash-log
+ * share intents, the project picker, crash logs, recording) is reused or
+ * re-wired here too, so no core v1 capability regresses at cutover -- see
+ * the implementation plan's own Tier 3 exit criteria.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GridScreen(viewModel: ArrangementViewModel = viewModel()) {
+fun GridScreen(
+    viewModel: ArrangementViewModel = viewModel(),
+    /** An audio [Uri] shared INTO BeatWave from another app via
+     *  ACTION_SEND (see [com.beatwave.android.MainActivity]'s intent
+     *  handling), or null if the app was launched normally. Identical
+     *  contract to ArrangementScreen's own parameter of the same name. */
+    incomingShareUri: Uri? = null,
+    /** Called once [incomingShareUri] has been handed to
+     *  [ArrangementViewModel.importAudioFromUri] below. */
+    onIncomingShareUriConsumed: () -> Unit = {}
+) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // RECORD_AUDIO runtime permission flow (design item 9), identical
+    // contract to ArrangementScreen's own -- requested lazily, only when
+    // the user first taps Record. pendingRecordTrackSlot remembers WHICH
+    // track triggered the request so the launcher's callback (which only
+    // receives a Boolean) knows where to route the result.
+    var pendingRecordTrackSlot by remember { mutableStateOf<Int?>(null) }
+    val recordPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val trackSlot = pendingRecordTrackSlot
+        pendingRecordTrackSlot = null
+        if (trackSlot != null) {
+            if (granted) viewModel.startRecording(trackSlot) else viewModel.recordingPermissionDenied()
+        }
+    }
+    val onRecordTap: (Int) -> Unit = { trackSlot ->
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasPermission) {
+            viewModel.startRecording(trackSlot)
+        } else {
+            pendingRecordTrackSlot = trackSlot
+            recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // POST_NOTIFICATIONS runtime permission flow (Phase 6 design item 4),
+    // identical contract to ArrangementScreen's own -- requested lazily,
+    // only the first time playback actually starts.
+    var hasRequestedNotificationPermission by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            viewModel.notificationPermissionDenied()
+        }
+    }
+    LaunchedEffect(uiState.isPlaying) {
+        if (uiState.isPlaying &&
+            !hasRequestedNotificationPermission &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
+            hasRequestedNotificationPermission = true
+            val hasPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    LaunchedEffect(uiState.message) {
+        val message = uiState.message
+        if (message != null) {
+            snackbarHostState.showSnackbar(message)
+            viewModel.messageShown()
+        }
+    }
+
+    // Share receive (Phase 7): identical contract to ArrangementScreen's
+    // own -- reuses the exact same SAF import pipeline a device-picked
+    // file already goes through.
+    LaunchedEffect(incomingShareUri) {
+        if (incomingShareUri != null) {
+            viewModel.importAudioFromUri(incomingShareUri)
+            onIncomingShareUriConsumed()
+        }
+    }
+
+    // Export share-out (send side): fires the moment
+    // ArrangementViewModel.exportProject finishes rendering.
+    LaunchedEffect(uiState.pendingShareFilePath) {
+        val path = uiState.pendingShareFilePath
+        if (path != null) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "audio/wav"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(sendIntent, "Share BeatWave project"))
+            viewModel.shareFileConsumed()
+        }
+    }
+
+    // Crash-log share-out: identical contract to ArrangementScreen's own.
+    LaunchedEffect(uiState.pendingShareCrashLogPath) {
+        val path = uiState.pendingShareCrashLogPath
+        if (path != null) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(sendIntent, "Share crash log"))
+            viewModel.crashLogShareConsumed()
+        }
+    }
+
     val project = uiState.project
 
     if (project == null) {
@@ -224,17 +366,74 @@ fun GridScreen(viewModel: ArrangementViewModel = viewModel()) {
     var scaleSelection by remember { mutableStateOf(ScaleType.CHROMATIC) }
     var showScalePicker by remember { mutableStateOf(false) }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                project.name,
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(16.dp).weight(1f).testTag("grid_project_title")
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                // Multiple projects: the current project's name doubles as
+                // the picker's entry point, identical convention to
+                // ArrangementScreen's own TopAppBar title.
+                title = {
+                    Text(
+                        project.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier
+                            .clickable(onClickLabel = "Switch project", role = Role.Button) {
+                                viewModel.openProjectPicker()
+                            }
+                            .semantics {
+                                contentDescription =
+                                    "Project: ${project.name}. Double tap to switch, rename, or delete projects."
+                            }
+                            .testTag("grid_project_title")
+                    )
+                },
+                actions = {
+                    TextButton(
+                        onClick = viewModel::openCrashLogs,
+                        modifier = Modifier
+                            .semantics { contentDescription = "View crash logs" }
+                            .testTag("crash_logs_button")
+                    ) {
+                        Text("Logs")
+                    }
+                    if (uiState.isExporting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .padding(horizontal = 16.dp)
+                                .semantics { contentDescription = "Exporting project" },
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = viewModel::exportProject,
+                            modifier = Modifier.padding(horizontal = 8.dp).testTag("export_button")
+                        ) {
+                            Text("Export")
+                        }
+                    }
+                }
             )
-            TextButton(onClick = { showSounds = true }, modifier = Modifier.testTag("grid_sounds_button")) {
-                Text("Sounds")
-            }
-        }
+        },
+        bottomBar = {
+            // Reused unchanged from ArrangementScreen per the implementation
+            // plan's own instruction. onOpenLibrary = null: GridScreen's own
+            // "Sounds" button (below, in the row under this bar) already
+            // serves the analogous role for this screen, so the old
+            // "Loop Library" button would be a redundant second entry point.
+            PlaybackControlBar(
+                isPlaying = uiState.isPlaying,
+                isRecording = uiState.recordingTrackSlot != null,
+                currentFrame = uiState.currentFrame,
+                sampleRate = uiState.sampleRate,
+                onTogglePlayPause = viewModel::togglePlayPause,
+                onStop = viewModel::stopPlayback,
+                onOpenLibrary = null
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+    Column(Modifier.fillMaxSize().padding(padding)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TrackSwitcher(
                 tracks = project.tracks,
@@ -243,6 +442,22 @@ fun GridScreen(viewModel: ArrangementViewModel = viewModel()) {
                 onSelectSlot = { focusedTrackSlot = it },
                 modifier = Modifier.weight(1f)
             )
+            // The focused track's own Record affordance, reused unchanged
+            // from ArrangementScreen -- operates on whichever track the
+            // TrackSwitcher currently has focused, matching how "Sounds"
+            // (below) already operates on the same focused track.
+            RecordAffordance(
+                trackSlot = focusedTrackSlot,
+                isRecording = uiState.recordingTrackSlot == focusedTrackSlot,
+                isDisabled = uiState.recordingTrackSlot != null && uiState.recordingTrackSlot != focusedTrackSlot,
+                recordedFrameCount = uiState.recordedFrameCount,
+                sampleRate = uiState.sampleRate,
+                onRecordTap = { onRecordTap(focusedTrackSlot) },
+                onStopRecordTap = viewModel::stopRecording
+            )
+            TextButton(onClick = { showSounds = true }, modifier = Modifier.testTag("grid_sounds_button")) {
+                Text("Sounds")
+            }
             ScaleChip(selection = scaleSelection, onClick = { showScalePicker = true })
         }
         if (showScalePicker) {
@@ -354,6 +569,45 @@ fun GridScreen(viewModel: ArrangementViewModel = viewModel()) {
                 onImport = { uri -> viewModel.importAudioFromUri(uri) }
             )
         }
+    }
+    }
+
+    if (uiState.showProjectPicker) {
+        ProjectPickerSheet(
+            projects = uiState.projectSummaries,
+            activeProjectId = project.id,
+            onDismiss = viewModel::closeProjectPicker,
+            onOpen = viewModel::switchToProject,
+            onCreate = viewModel::createNewProject,
+            onRename = viewModel::renameProject,
+            onDelete = viewModel::deleteProject
+        )
+    }
+
+    if (uiState.showCrashLogs) {
+        CrashLogsSheet(
+            logs = uiState.crashLogSummaries,
+            onDismiss = viewModel::closeCrashLogs,
+            onShare = viewModel::shareCrashLog
+        )
+    }
+
+    // Only one of these two pending-category prompts can be meaningfully
+    // shown at once, identical reasoning to ArrangementScreen's own guard.
+    val pendingImport = uiState.pendingImport
+    val pendingRecording = uiState.pendingRecording
+    if (pendingImport != null) {
+        CategoryPickerDialog(
+            fileName = pendingImport.displayName,
+            onDismiss = viewModel::cancelPendingImport,
+            onConfirm = { category -> viewModel.confirmPendingImport(category) }
+        )
+    } else if (pendingRecording != null) {
+        CategoryPickerDialog(
+            fileName = pendingRecording.displayName,
+            onDismiss = viewModel::cancelPendingRecording,
+            onConfirm = { category -> viewModel.confirmPendingRecording(category) }
+        )
     }
 }
 
