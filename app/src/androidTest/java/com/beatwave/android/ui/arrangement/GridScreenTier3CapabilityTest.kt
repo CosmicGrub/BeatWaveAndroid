@@ -138,6 +138,32 @@ class GridScreenTier3CapabilityTest {
             0, recordedBlock.pitchRow
         )
 
+        // Stop the transport BEFORE any further Compose query. Diagnosed on
+        // real hardware (Tab S9 FE, 2026-09-27): PlaybackEngine.startRecording
+        // starts the transport and stopRecording deliberately does NOT stop
+        // it, so playback keeps running after the take and the 50 ms
+        // playhead poll keeps updating uiState.currentFrame. GridScreen reads
+        // that at its top level, so once the recording turns Track 1 into a
+        // melodic track the full 25 x 64 cell grid is recomposed every tick
+        // and Compose never reaches idle -- every fetchSemanticsNodes() then
+        // times out with ComposeNotIdleException ("compose being busy"),
+        // exactly the symptom this test showed. Earlier clicks in this test
+        // passed only because an unassigned track shows a cheap empty prompt
+        // instead of the grid. Not device contention. Poll the ViewModel
+        // directly (not via Compose) since waiting through Compose is what
+        // would hang here.
+        var viewModel: ArrangementViewModel? = null
+        composeTestRule.activityRule.scenario.onActivity { activity ->
+            viewModel = androidx.lifecycle.ViewModelProvider(activity)[ArrangementViewModel::class.java]
+        }
+        viewModel!!.stopPlayback()
+        val stopDeadline = System.currentTimeMillis() + LIBRARY_TIMEOUT_MS
+        while (viewModel!!.uiState.value.isPlaying && System.currentTimeMillis() < stopDeadline) {
+            Thread.sleep(50)
+        }
+        assertTrue("expected the transport to stop before the visual check", !viewModel!!.uiState.value.isPlaying)
+        Thread.sleep(TRANSPORT_STOP_SETTLE_MS)
+
         // And it's genuinely VISIBLE in the real rendered grid, not just
         // correct in the persisted data -- switch focus to Track 1 (already
         // focused by default here) and confirm the cell renders filled.
@@ -278,5 +304,6 @@ class GridScreenTier3CapabilityTest {
         private const val LIBRARY_TIMEOUT_MS = 10_000L
         private const val RECORDING_DURATION_MS = 1_500L
         private const val TEARDOWN_SETTLE_MS = 300L
+        private const val TRANSPORT_STOP_SETTLE_MS = 300L
     }
 }
