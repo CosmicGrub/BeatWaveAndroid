@@ -18,6 +18,7 @@ import com.beatwave.android.data.model.Sample
 import com.beatwave.android.data.model.SampleCategory
 import com.beatwave.android.data.model.SampleSource
 import com.beatwave.android.data.model.Track
+import com.beatwave.android.data.model.backfillLegacyMelodicPitchRows
 import com.beatwave.android.data.storage.AppPreferences
 import com.beatwave.android.data.storage.ProjectRepository
 import com.beatwave.android.diagnostics.CrashLogger
@@ -317,7 +318,7 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             val bundledSamples = assetLoopLibrary.loadSamples()
             val importedSamples = importedSampleIndex.load()
             val samples = (bundledSamples + importedSamples).associateBy { it.id }
-            val project = loadedProject ?: Project(
+            val project = loadedProject?.let { backfillMelodic(it, samples) } ?: Project(
                 id = startProjectId,
                 name = "My Project",
                 bpm = DEFAULT_BPM,
@@ -521,6 +522,15 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
 
     // --- Grid screen: Sounds picker wiring (Tier 2.4) ---
 
+    private fun backfillMelodic(project: Project, samples: Map<String, Sample>): Project =
+        backfillLegacyMelodicPitchRows(project) { id -> samples[id]?.category in MELODIC_CATEGORIES }
+
+    /** Lets the grid surface a short explanation through the existing
+     *  Snackbar channel (e.g. a refused cross-family Sounds assignment). */
+    internal fun reportMessage(message: String) {
+        _uiState.update { it.copy(message = message) }
+    }
+
     /** Melodic track: the Sounds picker's "Add" REPLACES assignedSampleIds
      *  with this one sample. Existing LoopBlocks on the track are left
      *  completely untouched -- only the track's instrument assignment
@@ -533,7 +543,13 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
         if (track.assignedSampleIds == listOf(sampleId)) return
         val newTracks = project.tracks.map { t ->
-            if (t.slot == trackSlot) t.copy(assignedSampleIds = listOf(sampleId)) else t
+            // Tier 3 gate: melodic blocks must follow the new instrument --
+            // before, only the label changed while the OLD sample kept
+            // playing (blocks resolve their sound via block.sampleId).
+            if (t.slot == trackSlot) t.copy(
+                assignedSampleIds = listOf(sampleId),
+                loopBlocks = t.loopBlocks.map { b -> if (b.pitchRow != null) b.copy(sampleId = sampleId) else b }
+            ) else t
         }
         rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
     }
@@ -592,7 +608,12 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                         volume = volume,
                         trimStartMs = trimStartMs,
                         trimEndMs = trimEndMs,
-                        pitchSemitones = pitchSemitones
+                        pitchSemitones = pitchSemitones,
+                        // Keep a melodic block's grid row in step with the
+                        // pitch it actually plays at (the editor slider
+                        // used to desync them); fractional cents remain a
+                        // fine-tune on top of the rounded row.
+                        pitchRow = if (b.pitchRow != null) kotlin.math.round(pitchSemitones).toInt() else null
                     )
                 }
             )
@@ -692,7 +713,7 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             ensureRecordingFinalizing()?.join()
             playbackEngine.stop()
 
-            val project = repository.load(id) ?: return@launch
+            val project = repository.load(id)?.let { backfillMelodic(it, _uiState.value.samples) } ?: return@launch
             appPreferences.lastActiveProjectId = id
             playbackEngine.loadProject(project, _uiState.value.samples)
             pushProjectMetadata(project)

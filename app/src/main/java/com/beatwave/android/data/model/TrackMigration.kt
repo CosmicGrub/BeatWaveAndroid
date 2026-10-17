@@ -24,3 +24,25 @@ fun migrateTrackAssignedSampleIds(track: Track): Track {
 /** Applies [migrateTrackAssignedSampleIds] to every track in [project]. */
 fun migrateProjectAssignedSampleIds(project: Project): Project =
     project.copy(tracks = project.tracks.map(::migrateTrackAssignedSampleIds))
+
+/**
+ * Tier 3 cutover gate: a melodic block placed before the grid existed has
+ * `pitchRow == null` (the drum convention), so the melodic grid skips it --
+ * it still plays but is invisible and undeletable. For a track assigned to
+ * exactly one MELODIC sample, every null-row block of that sample is a
+ * legacy melodic note; its row is the semitone offset it already plays at.
+ * [isMelodicSample] is injected so this stays free of the sample library.
+ * Idempotent; tracks of any other shape (drum kits, mixed, unassigned) are
+ * untouched.
+ */
+fun backfillLegacyMelodicPitchRows(project: Project, isMelodicSample: (String) -> Boolean): Project =
+    project.copy(tracks = project.tracks.map { track ->
+        val only = track.assignedSampleIds.singleOrNull()
+        if (only == null || !isMelodicSample(only)) return@map track
+        if (track.loopBlocks.none { it.pitchRow == null && it.sampleId == only }) return@map track
+        track.copy(loopBlocks = track.loopBlocks.map { b ->
+            if (b.pitchRow == null && b.sampleId == only) {
+                b.copy(pitchRow = kotlin.math.round(b.pitchSemitones).toInt())
+            } else b
+        })
+    })

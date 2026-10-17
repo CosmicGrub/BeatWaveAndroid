@@ -556,7 +556,12 @@ fun GridScreen(
                         GridTrackKind.UNASSIGNED -> sample.category == SampleCategory.DRUMS
                         GridTrackKind.NOT_YET_SUPPORTED -> false
                     }
-                    if (isDrumBehavior) {
+                    val sampleIsDrum = sample.category == SampleCategory.DRUMS
+                    if (kind == GridTrackKind.DRUM_KIT && !sampleIsDrum) {
+                        viewModel.reportMessage("This track is a drum kit -- pick a drum sound, or use another track for melodic sounds.")
+                    } else if (kind == GridTrackKind.MELODIC && sampleIsDrum) {
+                        viewModel.reportMessage("This track is melodic -- use another track for drum sounds.")
+                    } else if (isDrumBehavior) {
                         if (sample.id in focusedTrack.assignedSampleIds) {
                             viewModel.removeSampleFromTrack(focusedTrackSlot, sample.id)
                         } else {
