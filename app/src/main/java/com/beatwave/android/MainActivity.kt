@@ -47,7 +47,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleShareIntent(intent)
+        // Only on a fresh launch: after a recreation (rotation, fold) the
+        // original ACTION_SEND intent is still attached, and handling it
+        // again re-imported the same file every time.
+        if (savedInstanceState == null) handleShareIntent(intent)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -74,13 +77,20 @@ class MainActivity : ComponentActivity() {
     private fun handleShareIntent(intent: Intent?) {
         if (intent == null || intent.action != Intent.ACTION_SEND) return
         if (intent.type?.startsWith("audio/") != true) return
-        val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        // A malformed extra from another app must never crash the launch.
+        val uri = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+        } catch (e: RuntimeException) {
+            null
         }
-        if (uri != null) {
+        // content:// only -- a shared file arrives as a content Uri; a
+        // file:// or other scheme from another app is not a valid share.
+        if (uri != null && uri.scheme == "content") {
             incomingShareUri.value = uri
         }
     }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,7 +60,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -207,6 +211,28 @@ internal fun chromaticPitchRows(): List<Int> = (12 downTo -12).toList()
 // simplification -- revisit if/when a longer grid is actually needed).
 private const val GRID_COLUMNS = 64
 
+private const val GRID_UNITS_PER_BAR = GridConstants.GRID_UNITS_PER_BEAT * 4
+
+/** Tier 3 gate: the grid used to stop at a fixed 64 columns, so anything
+ *  placed (or recorded/imported) past that was playing but unreachable.
+ *  Width is now at least 64, or one empty bar past the last block's end,
+ *  rounded up to a whole bar. Pure; see GridScreenLogicTest. */
+internal fun gridColumnCount(blocks: List<LoopBlock>): Int {
+    val lastEnd = blocks.maxOfOrNull { it.startGridUnit + it.lengthGridUnits } ?: 0
+    val barsNeeded = (lastEnd + GRID_UNITS_PER_BAR - 1) / GRID_UNITS_PER_BAR + 1
+    return maxOf(GRID_COLUMNS, barsNeeded * GRID_UNITS_PER_BAR)
+}
+
+/** Tier 3 gate (a11y): every cell announces its own position instead of
+ *  one identical string -- keeps the "Filled cell"/"Empty cell" prefix the
+ *  tests and TalkBack users already rely on. Pure. */
+internal fun gridCellDescription(filled: Boolean, rowLabel: String, column: Int): String {
+    val bar = column / GRID_UNITS_PER_BAR + 1
+    val beat = (column % GRID_UNITS_PER_BAR) / GridConstants.GRID_UNITS_PER_BEAT + 1
+    val step = column % GridConstants.GRID_UNITS_PER_BEAT + 1
+    return "${if (filled) "Filled" else "Empty"} cell, $rowLabel, bar $bar beat $beat step $step"
+}
+
 private val ROW_HEIGHT: Dp = 28.dp
 private val ROW_LABEL_WIDTH: Dp = 48.dp
 private val CELL_WIDTH: Dp = 28.dp
@@ -253,7 +279,7 @@ fun GridScreen(
     // the user first taps Record. pendingRecordTrackSlot remembers WHICH
     // track triggered the request so the launcher's callback (which only
     // receives a Boolean) knows where to route the result.
-    var pendingRecordTrackSlot by remember { mutableStateOf<Int?>(null) }
+    var pendingRecordTrackSlot by rememberSaveable { mutableStateOf<Int?>(null) }
     val recordPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -278,7 +304,7 @@ fun GridScreen(
     // POST_NOTIFICATIONS runtime permission flow (Phase 6 design item 4),
     // identical contract to ArrangementScreen's own -- requested lazily,
     // only the first time playback actually starts.
-    var hasRequestedNotificationPermission by remember { mutableStateOf(false) }
+    var hasRequestedNotificationPermission by rememberSaveable { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -359,12 +385,14 @@ fun GridScreen(
         return
     }
 
-    var focusedTrackSlot by remember { mutableStateOf(project.tracks.firstOrNull()?.slot ?: 1) }
-    var showSounds by remember { mutableStateOf(false) }
+    // Tier 3 gate: rememberSaveable so a rotation/fold/process recreation
+    // keeps the focused track, open sheets and scale instead of resetting.
+    var focusedTrackSlot by rememberSaveable { mutableStateOf(project.tracks.firstOrNull()?.slot ?: 1) }
+    var showSounds by rememberSaveable { mutableStateOf(false) }
     // Tier 2.5: session-only, like focusedTrackSlot/showSounds above --
     // not persisted on the Project, matching the spec's own requirement.
-    var scaleSelection by remember { mutableStateOf(ScaleType.CHROMATIC) }
-    var showScalePicker by remember { mutableStateOf(false) }
+    var scaleSelection by rememberSaveable { mutableStateOf(ScaleType.CHROMATIC) }
+    var showScalePicker by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -496,6 +524,7 @@ fun GridScreen(
                     viewModel.toggleGridCell(focusedTrackSlot, gridColumn, target)
                 },
                 onLongPressBlock = { block -> viewModel.openBlockEditor(focusedTrackSlot, block.id) },
+                onSeek = viewModel::seekToGridUnit,
                 onStretchPlace = { gridColumn, pitchRow, length ->
                     viewModel.placeStretchedBlock(focusedTrackSlot, gridColumn, pitchRow, length)
                 }
@@ -665,7 +694,8 @@ private fun GridBody(
     playheadGridUnitPosition: Float?,
     onCellTap: (gridColumn: Int, target: GridCellTarget) -> Unit,
     onLongPressBlock: (LoopBlock) -> Unit,
-    onStretchPlace: (gridColumn: Int, pitchRow: Int, length: Int) -> Unit
+    onStretchPlace: (gridColumn: Int, pitchRow: Int, length: Int) -> Unit,
+    onSeek: (gridUnit: Int) -> Unit
 ) {
     when (gridTrackKind(track, samples)) {
         GridTrackKind.UNASSIGNED -> CenteredPrompt(
@@ -682,7 +712,8 @@ private fun GridBody(
             playheadGridUnitPosition = playheadGridUnitPosition,
             onCellTap = onCellTap,
             onLongPressBlock = onLongPressBlock,
-            onStretchPlace = onStretchPlace
+            onStretchPlace = onStretchPlace,
+            onSeek = onSeek
         )
         // Tier 2.2 (drag-to-stretch) is melodic-only -- a drum one-shot hit
         // has no "stretch" concept, so DrumGrid keeps its Tier 2.1 gesture
@@ -721,10 +752,12 @@ private fun MelodicGrid(
     playheadGridUnitPosition: Float?,
     onCellTap: (gridColumn: Int, target: GridCellTarget) -> Unit,
     onLongPressBlock: (LoopBlock) -> Unit,
-    onStretchPlace: (gridColumn: Int, pitchRow: Int, length: Int) -> Unit
+    onStretchPlace: (gridColumn: Int, pitchRow: Int, length: Int) -> Unit,
+    onSeek: (gridUnit: Int) -> Unit
 ) {
     val verticalScrollState = rememberScrollState()
     val horizontalScrollState = rememberScrollState()
+    val columns = remember(track.loopBlocks) { gridColumnCount(track.loopBlocks) }
     var activeDrag by remember { mutableStateOf<DragPreview?>(null) }
 
     // (gridColumn, pitchRow) -> the block covering that cell, if any.
@@ -758,7 +791,7 @@ private fun MelodicGrid(
             // Tier 2.2: horizontal panning moves here -- any drag directly
             // on a grid cell now means stretch-place instead (see each
             // row's Row below, horizontalScroll(..., enabled = false)).
-            HorizontalScrubStrip(horizontalScrollState)
+            HorizontalScrubStrip(horizontalScrollState, columns, onSeek)
             Column(
                 Modifier
                     .fillMaxSize()
@@ -784,7 +817,7 @@ private fun MelodicGrid(
                         // content as a pan gesture -- that gesture now
                         // belongs to GridCell's stretch-drag handling below.
                         Row(Modifier.horizontalScroll(horizontalScrollState, enabled = false)) {
-                            for (column in 0 until GRID_COLUMNS) {
+                            for (column in 0 until columns) {
                                 val block = blocksByCell[column to row]
                                 // Known, accepted limitation: this live
                                 // preview shows the RAW drag extent, not
@@ -827,6 +860,11 @@ private fun MelodicGrid(
                                     } else {
                                         null
                                     },
+                                    description = gridCellDescription(
+                                        filled = block != null || previewed,
+                                        rowLabel = if (row == 0) "natural pitch" else "${if (row > 0) "+" else ""}$row semitones",
+                                        column = column
+                                    ),
                                     testTag = "grid_cell_${column}_$row"
                                 )
                             }
@@ -853,14 +891,30 @@ private fun MelodicGrid(
  * rather than guessed.
  */
 @Composable
-private fun HorizontalScrubStrip(horizontalScrollState: ScrollState) {
+private fun HorizontalScrubStrip(horizontalScrollState: ScrollState, columns: Int, onSeek: (Int) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = ROW_LABEL_WIDTH)) {
         Row(
             Modifier
                 .horizontalScroll(horizontalScrollState)
                 .testTag("grid_scrub_strip")
+                // Tier 3 gate: the old screen's ruler could seek; the grid
+                // had no seek at all. A tap on the ruler moves the playhead
+                // (a drag still pans -- scroll consumes it first), and the
+                // same seek is exposed as accessibility actions, since the
+                // only previous TalkBack seek action died with the old screen.
+                .pointerInput(columns) {
+                    val cellPx = CELL_WIDTH.toPx()
+                    detectTapGestures { offset -> onSeek((offset.x / cellPx).toInt().coerceIn(0, columns - 1)) }
+                }
+                .semantics {
+                    contentDescription = "Timeline ruler. Tap to move the playhead."
+                    customActions = listOf(
+                        CustomAccessibilityAction("Seek to start") { onSeek(0); true },
+                        CustomAccessibilityAction("Seek to end of grid") { onSeek(columns - 1); true }
+                    )
+                }
         ) {
-            for (column in 0 until GRID_COLUMNS) {
+            for (column in 0 until columns) {
                 Box(Modifier.width(CELL_WIDTH).height(SCRUB_STRIP_HEIGHT), contentAlignment = Alignment.BottomCenter) {
                     val tall = column % GridConstants.GRID_UNITS_PER_BEAT == 0
                     Box(
@@ -913,10 +967,18 @@ private fun DrumGrid(
     // LoopBlock.pitchRow's doc comment) -- the opposite filter from
     // MelodicGrid's blocksByCell, which is exactly why a drum row can't
     // reuse an Int row identity.
+    // Every column a multi-unit block spans maps to it (a block can be
+    // >1 unit long, e.g. from a recording/import or the editor) -- before,
+    // only its start column rendered, so the rest looked empty.
     val blocksByCell = remember(track.loopBlocks) {
-        track.loopBlocks.filter { it.pitchRow == null }
-            .associateBy { it.startGridUnit to it.sampleId }
+        val map = mutableMapOf<Pair<Int, String>, LoopBlock>()
+        for (b in track.loopBlocks) {
+            if (b.pitchRow != null) continue
+            for (column in b.startGridUnit until b.startGridUnit + b.lengthGridUnits) map[column to b.sampleId] = b
+        }
+        map
     }
+    val columns = remember(track.loopBlocks) { gridColumnCount(track.loopBlocks) }
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -939,13 +1001,14 @@ private fun DrumGrid(
                         )
                     }
                     Row(Modifier.horizontalScroll(horizontalScrollState)) {
-                        for (column in 0 until GRID_COLUMNS) {
+                        for (column in 0 until columns) {
                             val block = blocksByCell[column to sampleId]
                             GridCell(
                                 filled = block != null,
                                 onTap = { onCellTap(column, GridCellTarget.DrumSample(sampleId)) },
                                 onLongPress = block?.let { b -> { onLongPressBlock(b) } },
                                 stretchDrag = null, // Tier 2.2 is melodic-only
+                                description = gridCellDescription(block != null, sampleName, column),
                                 testTag = "grid_cell_${column}_$sampleId"
                             )
                         }
@@ -1005,6 +1068,7 @@ private fun GridCell(
     onTap: () -> Unit,
     onLongPress: (() -> Unit)?,
     stretchDrag: StretchDragHandlers?,
+    description: String,
     testTag: String
 ) {
     Box(
@@ -1019,16 +1083,16 @@ private fun GridCell(
                 if (stretchDrag != null) {
                     Modifier.tapOrDragToStretch(onTap = onTap, handlers = stretchDrag)
                 } else {
-                    Modifier.combinedClickable(role = Role.Button, onClick = onTap, onLongClick = onLongPress)
+                    Modifier.combinedClickable(
+                        role = Role.Button,
+                        onClickLabel = if (filled) "Remove" else "Place",
+                        onClick = onTap,
+                        onLongClickLabel = if (onLongPress != null) "Edit" else null,
+                        onLongClick = onLongPress
+                    )
                 }
             )
-            .semantics {
-                contentDescription = if (filled) {
-                    "Filled cell, tap to remove, long-press to edit"
-                } else {
-                    "Empty cell, tap to place"
-                }
-            }
+            .semantics { contentDescription = description }
     )
 }
 
@@ -1064,6 +1128,7 @@ private fun Modifier.tapOrDragToStretch(onTap: () -> Unit, handlers: StretchDrag
                 val down = awaitFirstDown(requireUnconsumed = false)
                 var dragging = false
                 var totalDx = 0f
+                var totalDy = 0f
                 var lastReportedDelta = 0
                 val slop = viewConfiguration.touchSlop
                 while (true) {
@@ -1074,7 +1139,14 @@ private fun Modifier.tapOrDragToStretch(onTap: () -> Unit, handlers: StretchDrag
                         break
                     }
                     totalDx += change.positionChange().x
+                    totalDy += change.positionChange().y
                     if (!dragging) {
+                        // Tier 3 gate: a gesture that moves past slop more
+                        // vertically than horizontally is the parent's
+                        // vertical scroll, not a tap -- bail out WITHOUT
+                        // consuming so the scroll keeps working and no note
+                        // is placed on release (it used to place one).
+                        if (abs(totalDy) > slop && abs(totalDy) > abs(totalDx)) break
                         if (abs(totalDx) <= slop) continue
                         // Crossing slop and this event's own delta being
                         // large enough to represent real movement past a
