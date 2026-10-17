@@ -93,23 +93,14 @@ class ExportShareTest {
     fun exportProject_rendersRealWavFile_andLaunchesShareChooser() {
         scenario = ActivityScenario.launch(MainActivity::class.java)
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("track_header_1").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("grid_project_title").fetchSemanticsNodes().isNotEmpty()
         }
 
         // --- Build a minimal one-track arrangement through the real UI
         // (same pattern as ArrangementScreenPlaybackTest) -- an empty
         // project has nothing to export (see exportProject's own guard),
         // so there must be an actual placed block first. ---
-        composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.ensureLoopLibraryOpen()
-        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.ensureLoopLibraryClosed()
-        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("loop_block_1_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeTestRule.placeKickNoteOnTrack1()
 
         val sampleRateBeforeExport = AudioEngineBridge.getSampleRate()
         assertTrue(

@@ -11,12 +11,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
-import com.beatwave.android.ui.arrangement.ArrangementScreen
+import com.beatwave.android.ui.arrangement.GridScreen
 
 /**
- * Phase 3 entry point: hosts the real arrangement UI -- horizontal timeline
- * with the fixed 8 tracks, bottom-sheet loop library, per-block editor, and
- * playback controls -- replacing Phase 0's placeholder status screen.
+ * Entry point: hosts [GridScreen], the grid/piano-roll sequencer UI (Tier 3
+ * cutover -- this used to host the horizontal-timeline ArrangementScreen).
  *
  * Native audio engine lifecycle (startEngine/nativeInit/loadProject on init,
  * stopEngine on teardown) is owned by
@@ -35,7 +34,7 @@ import com.beatwave.android.ui.arrangement.ArrangementScreen
  * the manifest deliberately uses plain "standard" launch mode here, NOT
  * singleTask -- see the manifest's own comment for why) -- funnel through
  * [handleShareIntent] into the SAME [incomingShareUri] Compose state, so
- * [ArrangementScreen] only needs to handle one case. CAVEAT (found during
+ * [GridScreen] only needs to handle one case. CAVEAT (found during
  * the post-v1 A1 import-hardening audit): because launch mode is standard,
  * a burst of ACTION_SEND intents typically spins up SEPARATE MainActivity/
  * ArrangementViewModel instances rather than being serialized through one
@@ -54,7 +53,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    ArrangementScreen(
+                    GridScreen(
                         incomingShareUri = incomingShareUri.value,
                         onIncomingShareUriConsumed = { incomingShareUri.value = null }
                     )

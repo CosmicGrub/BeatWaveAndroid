@@ -94,7 +94,7 @@ class ImportConcurrencyGuardTest {
 
         scenario = ActivityScenario.launch(MainActivity::class.java)
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("track_header_1").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("grid_project_title").fetchSemanticsNodes().isNotEmpty()
         }
 
         var viewModel: ArrangementViewModel? = null
@@ -147,7 +147,7 @@ class ImportConcurrencyGuardTest {
 
         scenario = ActivityScenario.launch(MainActivity::class.java)
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("track_header_1").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("grid_project_title").fetchSemanticsNodes().isNotEmpty()
         }
 
         var viewModel: ArrangementViewModel? = null

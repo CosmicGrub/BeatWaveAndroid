@@ -12,8 +12,8 @@ import com.beatwave.android.AudioEngineBridge
 import com.beatwave.android.BeatWaveApplication
 import com.beatwave.android.MainActivity
 import com.beatwave.android.data.storage.ProjectRepository
-import com.beatwave.android.ui.arrangement.ensureLoopLibraryClosed
-import com.beatwave.android.ui.arrangement.ensureLoopLibraryOpen
+import com.beatwave.android.ui.arrangement.placeKickNoteOnTrack1
+import com.beatwave.android.ui.arrangement.waitUntilSafely
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -105,8 +105,8 @@ class BackgroundPlaybackServiceTest {
     @Test
     fun startPlayback_survivesBackgrounding_andRespondsToRealMediaButton_withSessionAndNotificationVisible() {
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("track_header_1").fetchSemanticsNodes().isNotEmpty()
+        composeTestRule.waitUntilSafely(timeoutMillis = INIT_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithTag("grid_project_title").fetchSemanticsNodes().isNotEmpty()
         }
 
         // --- (d)+(e): build a minimal one-track arrangement through the
@@ -115,16 +115,7 @@ class BackgroundPlaybackServiceTest {
         // (the transport counter advances regardless), but a real block
         // makes this closer to a genuine "song playing in the background"
         // scenario the manual exit criterion describes. ---
-        composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.ensureLoopLibraryOpen()
-        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.ensureLoopLibraryClosed()
-        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("loop_block_1_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeTestRule.placeKickNoteOnTrack1()
 
         // --- Start playback via the real UI, then prove the real, live,
         // singleton native engine (not a UI-only counter) genuinely
@@ -199,10 +190,17 @@ class BackgroundPlaybackServiceTest {
         val frameAtPauseSettled = AudioEngineBridge.getCurrentFrame()
         Thread.sleep(PAUSED_INTERVAL_MS)
         val frameAfterPausedInterval = AudioEngineBridge.getCurrentFrame()
+        // Not bit-exact: a real media-button pause while backgrounded has a
+        // measured settle delay of up to one audio burst (project memory
+        // finding #30; 960 frames on the emulator, a few hundred on the Fold
+        // 5) -- FullIntegrationWalkthroughTest already allows for it. Two
+        // bursts of slack still fails loudly if pause truly doesn't take
+        // effect: ~24,000 frames of drift over PAUSED_INTERVAL_MS.
+        val drift = Math.abs(frameAfterPausedInterval - frameAtPauseSettled)
         assertTrue(
             "expected the transport to freeze after a real media-button pause while backgrounded " +
-                "($frameAtPauseSettled vs $frameAfterPausedInterval)",
-            frameAtPauseSettled == frameAfterPausedInterval
+                "($frameAtPauseSettled vs $frameAfterPausedInterval, drift $drift frames)",
+            drift <= PAUSE_FREEZE_TOLERANCE_FRAMES
         )
 
         // --- Resume via the SAME media-button keycode (real players toggle
@@ -255,20 +253,11 @@ class BackgroundPlaybackServiceTest {
     @Test
     fun activityDestroyed_whilePlaying_doesNotKillBackgroundPlayback() {
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("track_header_1").fetchSemanticsNodes().isNotEmpty()
+        composeTestRule.waitUntilSafely(timeoutMillis = INIT_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithTag("grid_project_title").fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeTestRule.onNodeWithTag("track_header_1").performClick()
-        composeTestRule.ensureLoopLibraryOpen()
-        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("add_loop_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNodeWithTag("add_loop_$KICK_SAMPLE_ID").performClick()
-        composeTestRule.ensureLoopLibraryClosed()
-        composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithTag("loop_block_1_$KICK_SAMPLE_ID").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeTestRule.placeKickNoteOnTrack1()
 
         composeTestRule.onNodeWithTag("play_pause_button").performClick()
         Thread.sleep(PLAY_SETTLE_MS)
@@ -326,6 +315,7 @@ class BackgroundPlaybackServiceTest {
         private const val BACKGROUND_SETTLE_MS = 2_500L
         private const val PAUSE_SETTLE_MS = 300L
         private const val PAUSED_INTERVAL_MS = 500L
+        private const val PAUSE_FREEZE_TOLERANCE_FRAMES = 2_000L
         private const val POST_DESTROY_SETTLE_MS = 1_000L
         private const val TEARDOWN_SETTLE_MS = 300L
         private const val SHADE_SETTLE_MS = 1_000L

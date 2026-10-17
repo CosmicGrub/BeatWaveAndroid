@@ -1,5 +1,6 @@
 package com.beatwave.android.ui.arrangement
 
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -159,5 +160,33 @@ fun ComposeTestRule.performClickUntilEffective(
         throw AssertionError(
             "performClickUntilEffective: clicking tag=\"$tag\" never took effect after $maxAttempts attempts"
         )
+    }
+}
+
+/**
+ * Tier 3 cutover: the grid-screen replacement for the old "tap a track header,
+ * add a loop from the library, wait for its block" setup that several
+ * MainActivity-launching tests shared. On a fresh project Track 1 is
+ * unassigned, so this assigns the bundled kick via the Sounds picker and then
+ * taps the drum cell at column 0 -- the same two-step grid contract
+ * GridScreenSoundsPickerTest/GridScreenInteractionTest establish -- and waits
+ * until that cell reports itself filled.
+ */
+fun ComposeTestRule.placeKickNoteOnTrack1(
+    timeoutMillis: Long = 8_000L,
+    kickSampleId: String = "kick_basic_01"
+) {
+    onNodeWithTag("grid_sounds_button").performClick()
+    waitUntilSafely(timeoutMillis) { onAllNodesWithTag("add_loop_$kickSampleId").fetchSemanticsNodes().isNotEmpty() }
+    onNodeWithTag("add_loop_$kickSampleId").performClick()
+    waitUntilSafely(timeoutMillis) { onAllNodesWithTag("remove_loop_$kickSampleId").fetchSemanticsNodes().isNotEmpty() }
+    onNodeWithTag("loop_library_close_button").performClick()
+    waitUntilSafely(timeoutMillis) { onAllNodesWithTag("grid_drum_canvas").fetchSemanticsNodes().isNotEmpty() }
+    val cell = "grid_cell_0_$kickSampleId"
+    onNodeWithTag(cell).performClick()
+    waitUntilSafely(timeoutMillis) {
+        onAllNodesWithTag(cell).fetchSemanticsNodes().firstOrNull()
+            ?.config?.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)
+            ?.any { it.contains("Filled") } == true
     }
 }
