@@ -212,21 +212,6 @@ data class ArrangementUiState(
  * sequence in flight" guarantee the Phase 3 doc originally described,
  * without this class needing direct access to the mutex.
  *
- * PLACEMENT INTERACTION (documented per the implementation plan's request):
- * the user first taps a track row to select it (highlighted), then opens the
- * loop library and taps "Add" on a loop card. [addLoopToSelectedTrack] is a
- * no-op (with a user-facing message) if no track is currently selected.
- *
- * DEFAULT BLOCK LENGTH: a newly added block is sized to 4x the sample's
- * natural loop length, rounded up to a whole grid unit (see
- * [GridConstants.defaultLengthGridUnits]) -- long enough to be immediately
- * useful without further editing, short enough not to dominate the
- * timeline. Its start position defaults to the next free grid unit after
- * the track's last existing block (or 0 if the track is empty) -- see
- * [GridConstants.defaultStartGridUnit]. (Post-v1 audit A3: both of these
- * were extracted out of this class into GridConstants so they're directly
- * unit-testable; see GridConstantsTest.)
- *
  * MULTIPLE PROJECTS (post-v1 upgrade): [ProjectRepository] has been
  * ID-generic (save/load/list/delete) since Phase 1 -- this class was the
  * only thing hardcoding a single project id. [appPreferences] now records
@@ -348,59 +333,6 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 )
             }
         }
-    }
-
-    // --- Track selection ---
-
-    fun selectTrack(slot: Int) {
-        _uiState.update {
-            it.copy(selectedTrackSlot = if (it.selectedTrackSlot == slot) null else slot)
-        }
-    }
-
-    // --- Loop placement ---
-
-    fun addLoopToSelectedTrack(sample: Sample) {
-        val current = _uiState.value
-        val project = current.project ?: return
-        val trackSlot = current.selectedTrackSlot
-        if (trackSlot == null) {
-            _uiState.update { it.copy(message = "Select a track first, then add a loop.") }
-            return
-        }
-        val track = project.tracks.firstOrNull { it.slot == trackSlot } ?: return
-
-        val startGridUnit = GridConstants.defaultStartGridUnit(
-            track.loopBlocks.map { it.startGridUnit + it.lengthGridUnits }
-        )
-        val lengthGridUnits = GridConstants.defaultLengthGridUnits(sample.durationMs, project.bpm)
-        // Phase 8: enforce the spec's "max song length ~2-4 minutes" /
-        // "Out of Scope for v1: unlimited... song length" -- without this,
-        // repeatedly tapping Add on a track with no more room would just
-        // keep extending the timeline forever (see GridConstants.
-        // maxSongLengthGridUnits's own doc comment for the full story).
-        val maxGridUnits = GridConstants.maxSongLengthGridUnits(project.bpm)
-        if (startGridUnit + lengthGridUnits > maxGridUnits) {
-            _uiState.update {
-                it.copy(
-                    message = "Reached the maximum song length " +
-                        "(${GridConstants.MAX_SONG_LENGTH_SECONDS / 60} minutes) -- " +
-                        "trim or remove a block to add more."
-                )
-            }
-            return
-        }
-
-        val newBlock = LoopBlock(
-            id = UUID.randomUUID().toString(),
-            sampleId = sample.id,
-            startGridUnit = startGridUnit,
-            lengthGridUnits = lengthGridUnits
-        )
-        val newTracks = project.tracks.map { t ->
-            if (t.slot == trackSlot) t.copy(loopBlocks = t.loopBlocks + newBlock) else t
-        }
-        rebuildAndPersist(project.copy(tracks = newTracks, modifiedAtEpochMs = System.currentTimeMillis()))
     }
 
     // --- Grid-sequencer redesign (2026-08-24 spec), Tier 1 (walking

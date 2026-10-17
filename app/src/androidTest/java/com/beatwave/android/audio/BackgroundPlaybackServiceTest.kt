@@ -141,7 +141,18 @@ class BackgroundPlaybackServiceTest {
 
         // --- (d): a notification for this app must be posted while
         // playback is active. ---
-        val notificationDumpWhilePlaying = shell("dumpsys notification --noredact")
+        // Polled, not a single snapshot: Media3's MediaNotificationManager
+        // connects its internal controller and posts the notification
+        // asynchronously after the first Play, so a one-shot dumpsys 700 ms
+        // in raced it (intermittent miss, seen on the emulator).
+        var notificationDumpWhilePlaying = shell("dumpsys notification --noredact")
+        val notificationDeadline = System.currentTimeMillis() + NOTIFICATION_POST_TIMEOUT_MS
+        while (!notificationDumpWhilePlaying.contains("pkg=$PACKAGE_NAME") &&
+            System.currentTimeMillis() < notificationDeadline
+        ) {
+            Thread.sleep(250)
+            notificationDumpWhilePlaying = shell("dumpsys notification --noredact")
+        }
         assertTrue(
             "expected a notification posted for $PACKAGE_NAME while playing, got:\n$notificationDumpWhilePlaying",
             notificationDumpWhilePlaying.contains("pkg=$PACKAGE_NAME")
@@ -187,6 +198,17 @@ class BackgroundPlaybackServiceTest {
         // keyevent instead of a UI tap this time. ---
         shell("input keyevent KEYCODE_MEDIA_PLAY_PAUSE")
         Thread.sleep(PAUSE_SETTLE_MS)
+        // The pause travels through the MediaSession asynchronously and its
+        // latency varies (a few hundred ms on a loaded emulator), so wait
+        // until the transport has actually stopped advancing before taking
+        // the "settled" reading -- then the freeze check below measures a
+        // genuinely paused engine rather than racing the request.
+        var settleDeadline = System.currentTimeMillis() + PAUSE_TAKES_EFFECT_TIMEOUT_MS
+        while (System.currentTimeMillis() < settleDeadline) {
+            val a = AudioEngineBridge.getCurrentFrame()
+            Thread.sleep(150)
+            if (AudioEngineBridge.getCurrentFrame() == a) break
+        }
         val frameAtPauseSettled = AudioEngineBridge.getCurrentFrame()
         Thread.sleep(PAUSED_INTERVAL_MS)
         val frameAfterPausedInterval = AudioEngineBridge.getCurrentFrame()
@@ -312,10 +334,12 @@ class BackgroundPlaybackServiceTest {
         private const val LIBRARY_TIMEOUT_MS = 8_000L
 
         private const val PLAY_SETTLE_MS = 700L
+        private const val NOTIFICATION_POST_TIMEOUT_MS = 5_000L
         private const val BACKGROUND_SETTLE_MS = 2_500L
         private const val PAUSE_SETTLE_MS = 300L
         private const val PAUSED_INTERVAL_MS = 500L
         private const val PAUSE_FREEZE_TOLERANCE_FRAMES = 2_000L
+        private const val PAUSE_TAKES_EFFECT_TIMEOUT_MS = 3_000L
         private const val POST_DESTROY_SETTLE_MS = 1_000L
         private const val TEARDOWN_SETTLE_MS = 300L
         private const val SHADE_SETTLE_MS = 1_000L

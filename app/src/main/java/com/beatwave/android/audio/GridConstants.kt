@@ -73,25 +73,6 @@ object GridConstants {
     // domain types) so this object stays dependency-free of data.model, same
     // as every other function here.
 
-    /** How many times a newly-placed loop repeats by default, before any
-     *  manual trim/edit. */
-    const val DEFAULT_LOOP_REPEATS: Int = 4
-
-    /** Next free grid unit after a track's existing blocks, given each
-     *  existing block's end position (its startGridUnit + lengthGridUnits).
-     *  0 if the track is empty. */
-    fun defaultStartGridUnit(existingBlockEndGridUnits: Collection<Int>): Int =
-        existingBlockEndGridUnits.maxOrNull() ?: 0
-
-    /** [DEFAULT_LOOP_REPEATS]x a sample's natural length in grid units,
-     *  rounded up, minimum one beat. */
-    fun defaultLengthGridUnits(sampleDurationMs: Long, bpm: Int): Int {
-        val msPerGridUnit = 60000.0 / bpm.toDouble() / GRID_UNITS_PER_BEAT.toDouble()
-        val oneRepeatGridUnits =
-            kotlin.math.ceil(sampleDurationMs.toDouble() / msPerGridUnit).toInt().coerceAtLeast(1)
-        return (oneRepeatGridUnits * DEFAULT_LOOP_REPEATS).coerceAtLeast(GRID_UNITS_PER_BEAT)
-    }
-
     // --- Grid-sequencer redesign (2026-08-24 spec), Tier 2.2: drag-to-
     // stretch placement math. Kept here rather than in ArrangementViewModel
     // for the same reason as every other function in this object: pure,
