@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performTouchInput
@@ -158,7 +159,7 @@ class GridScreenCutoverGatesTest {
     @Test
     fun multiUnitDrumBlock_fillsItsWholeSpan() {
         startGrid()
-        composeTestRule.onNodeWithTag("track_pill_2").performClick()
+        composeTestRule.onNodeWithTag("track_pill_2").performScrollTo().performClick()
         composeTestRule.waitUntilSafely(LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("grid_drum_canvas").fetchSemanticsNodes().isNotEmpty()
         }

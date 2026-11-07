@@ -130,7 +130,7 @@ class GridScreenFullIntegrationWalkthroughTest {
         // ViewModel/CategoryPickerDialog/library-merge pipeline from there
         // on, then assigned via Sounds and placed by tapping a melodic
         // cell. ---
-        composeTestRule.onNodeWithTag("track_pill_2").performClick()
+        composeTestRule.onNodeWithTag("track_pill_2").performScrollTo().performClick()
         composeTestRule.waitUntilSafely(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("grid_empty_track_prompt").fetchSemanticsNodes().isNotEmpty()
         }

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.beatwave.android.data.model.LoopBlock
@@ -81,7 +82,7 @@ class GridScreenRenderingTest {
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("track_pill_2").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("track_pill_2").performClick()
+        composeTestRule.onNodeWithTag("track_pill_2").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("grid_empty_track_prompt").fetchSemanticsNodes().isNotEmpty()
         }
@@ -93,7 +94,7 @@ class GridScreenRenderingTest {
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("track_pill_4").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("track_pill_4").performClick()
+        composeTestRule.onNodeWithTag("track_pill_4").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("grid_not_yet_supported_prompt").fetchSemanticsNodes().isNotEmpty()
         }
@@ -105,7 +106,7 @@ class GridScreenRenderingTest {
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("track_pill_3").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("track_pill_3").performClick()
+        composeTestRule.onNodeWithTag("track_pill_3").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("grid_drum_canvas").fetchSemanticsNodes().isNotEmpty()
         }

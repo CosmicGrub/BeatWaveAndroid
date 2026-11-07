@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -243,7 +244,7 @@ class GridScreenTier3CapabilityTest {
         composeTestRule.waitUntilSafely(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("open_project_$originalProjectId").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("open_project_$originalProjectId").performClick()
+        composeTestRule.onNodeWithTag("open_project_$originalProjectId").performScrollTo().performClick()
         composeTestRule.waitUntilSafely(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             viewModel!!.uiState.value.project?.id == originalProjectId
         }

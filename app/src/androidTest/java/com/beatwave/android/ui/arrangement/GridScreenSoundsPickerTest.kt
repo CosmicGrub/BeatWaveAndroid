@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -131,7 +132,7 @@ class GridScreenSoundsPickerTest {
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("track_pill_2").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("track_pill_2").performClick()
+        composeTestRule.onNodeWithTag("track_pill_2").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("grid_empty_track_prompt").fetchSemanticsNodes().isNotEmpty()
         }
@@ -158,7 +159,7 @@ class GridScreenSoundsPickerTest {
         composeTestRule.waitUntil(timeoutMillis = INIT_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("track_pill_3").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("track_pill_3").performClick()
+        composeTestRule.onNodeWithTag("track_pill_3").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithTag("grid_drum_canvas").fetchSemanticsNodes().isNotEmpty()
         }
