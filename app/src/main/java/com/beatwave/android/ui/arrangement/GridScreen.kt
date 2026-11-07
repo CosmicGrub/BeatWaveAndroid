@@ -479,14 +479,21 @@ fun GridScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
     Column(Modifier.fillMaxSize().padding(padding)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TrackSwitcher(
-                tracks = project.tracks,
-                samples = uiState.samples,
-                selectedSlot = focusedTrackSlot,
-                onSelectSlot = { focusedTrackSlot = it },
-                modifier = Modifier.weight(1f)
-            )
+        // Two rows, not one: with the track pills sharing a row with the
+        // Record/Sounds/Scale controls, the pills got almost no width on a
+        // narrow screen (the Fold 5's 344 dp cover display, large font
+        // scale), so tracks 2-8 were effectively unreachable.
+        TrackSwitcher(
+            tracks = project.tracks,
+            samples = uiState.samples,
+            selectedSlot = focusedTrackSlot,
+            onSelectSlot = { focusedTrackSlot = it },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             // The focused track's own Record affordance, reused unchanged
             // from ArrangementScreen -- operates on whichever track the
             // TrackSwitcher currently has focused, matching how "Sounds"
