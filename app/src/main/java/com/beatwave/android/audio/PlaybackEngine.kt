@@ -188,6 +188,41 @@ class PlaybackEngine(context: Context) {
      *  process death) reaches here. [discardRecordingFile] is a throwaway
      *  path to write any in-flight recording's frames to before discarding
      *  the file -- the caller owns cleanup of that file afterward. */
+    // Live ArrangementViewModels sharing this engine. MainActivity is
+    // standard launch mode, so a share intent can create a second instance;
+    // clearing one must not shut the engine down under the other.
+    private val clients = java.util.concurrent.atomic.AtomicInteger(0)
+
+    fun registerClient() {
+        clients.incrementAndGet()
+    }
+
+    /** Called from ViewModel.onCleared. Returns true when no other client
+     *  remains (the caller may then request [shutdownAsync]). */
+    fun unregisterClient(): Boolean = clients.decrementAndGet() <= 0
+
+    /** Non-blocking [shutdown]: onCleared runs on the main thread and used
+     *  to runBlocking on engineMutex, which an in-progress export holds for
+     *  its whole render -- an ANR if the user left the app mid-export.
+     *  Skips the teardown if a new client registered in the meantime (it
+     *  would otherwise close the engine under a freshly started
+     *  ViewModel). [onDone] runs after, to clean the throwaway file. */
+    fun shutdownAsync(discardRecordingFile: File, onDone: () -> Unit) {
+        engineScope.launch {
+            engineMutex.withLock {
+                if (clients.get() <= 0) {
+                    playheadJob?.cancel()
+                    if (AudioEngineBridge.isRecording()) {
+                        AudioEngineBridge.stopRecording(discardRecordingFile.absolutePath)
+                    }
+                    AudioEngineBridge.stopEngine()
+                    _state.value = PlaybackEngineState()
+                }
+            }
+            onDone()
+        }
+    }
+
     suspend fun shutdown(discardRecordingFile: File) {
         engineMutex.withLock {
             playheadJob?.cancel()
@@ -202,6 +237,10 @@ class PlaybackEngine(context: Context) {
     // --- Transport (cheap/safe from any thread, per AudioEngineBridge's own contract) ---
 
     fun play() {
+        // Not started (init still running, or the engine failed to start):
+        // flipping isPlaying here left a stuck "playing" state with no
+        // audio, a 20 Hz poll loop and a notification nothing could clear.
+        if (!_state.value.engineStarted) return
         controller.play()
         _state.update { it.copy(isPlaying = true, isStopped = false) }
         ensurePlayheadPolling()
@@ -312,6 +351,7 @@ class PlaybackEngine(context: Context) {
      *  lock-screen/notification media action once the service is already
      *  running), so the "can't start a service from the background"
      *  restriction doesn't apply here either. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun startForegroundSession() {
         runCatching {
             appContext.startService(Intent(appContext, BeatWavePlaybackService::class.java))

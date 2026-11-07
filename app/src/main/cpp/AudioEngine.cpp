@@ -312,8 +312,8 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
         // the pointer load too, not just the read() call: otherwise the
         // window between loading a still-valid pointer and setting the flag
         // would be unprotected.
-        mInputReadInFlight.store(true, std::memory_order_release);
-        oboe::AudioStream *input = mInputStreamPtr.load(std::memory_order_acquire);
+        mInputReadInFlight.store(true, std::memory_order_seq_cst);
+        oboe::AudioStream *input = mInputStreamPtr.load(std::memory_order_seq_cst);
         if (input != nullptr) {
             const int32_t inputChannelCount = input->getChannelCount();
 #ifndef NDEBUG
@@ -335,7 +335,12 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
                      numFrames, kMaxInputScratchFrames, numFrames - kMaxInputScratchFrames);
             }
 #endif
-            const int32_t framesToRead = std::min(numFrames, kMaxInputScratchFrames);
+            // Also bounded by what the scratch buffer can hold at the stream's REAL channel
+            // count: it is sized for kChannelCount, and a stream that opened with more
+            // channels would otherwise make read() write past the end of it.
+            const int32_t scratchCapacityFrames =
+                    static_cast<int32_t>(mInputScratchBuffer.size() / static_cast<size_t>(std::max(1, inputChannelCount)));
+            const int32_t framesToRead = std::min({numFrames, kMaxInputScratchFrames, scratchCapacityFrames});
             // Zero timeout -- matches Oboe's own FullDuplexStream::readInput()
             // reference implementation exactly (see oboe/FullDuplexStream.h:
             // "getInputStream()->read(mInputBuffer.get(), numFrames,
@@ -362,7 +367,14 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
 
     // Mandate 6: the ONE master transport counter, advanced by exactly
     // numFrames every callback. Nothing else in this engine tracks time.
-    mTransportFrame.fetch_add(numFrames, std::memory_order_relaxed);
+    // compare_exchange, not fetch_add: stopTransport()/seekToFrame() store
+    // to this counter from another thread, and an unconditional add landed
+    // on top of that store (Stop left the frame at numFrames, a seek landed
+    // numFrames late). If a control call changed it since we loaded it, its
+    // value wins.
+    int64_t expectedFrame = transportFrameStart;
+    mTransportFrame.compare_exchange_strong(
+            expectedFrame, transportFrameStart + numFrames, std::memory_order_relaxed);
 
     return oboe::DataCallbackResult::Continue;
 }
@@ -567,7 +579,7 @@ void AudioEngine::waitForInputReadQuiescence() {
     // trade for not needing a condition variable the real-time audio thread
     // would have to touch.
     for (int i = 0; i < kQuiescenceMaxPolls; ++i) {
-        if (!mInputReadInFlight.load(std::memory_order_acquire)) {
+        if (!mInputReadInFlight.load(std::memory_order_seq_cst)) {
             return;
         }
         std::this_thread::sleep_for(kQuiescencePollInterval);
@@ -605,7 +617,7 @@ int64_t AudioEngine::stopRecording(const std::string &outputFilePath) {
 
     // Unpublish first so no callback that hasn't already grabbed the
     // pointer will start a new read() on a stream we're about to close.
-    mInputStreamPtr.store(nullptr, std::memory_order_release);
+    mInputStreamPtr.store(nullptr, std::memory_order_seq_cst);
 
     // Then wait for any read() the audio thread had ALREADY started (having
     // loaded the pointer before the unpublish above) to actually finish --

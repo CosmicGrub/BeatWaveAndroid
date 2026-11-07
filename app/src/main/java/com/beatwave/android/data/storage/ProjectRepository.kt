@@ -29,17 +29,39 @@ class ProjectRepository(private val projectsDir: File) {
      *  so a process kill mid-save can never leave a truncated/partial
      *  project file behind for [load]/[list] to trip over. */
     fun save(project: Project) {
-        if (!projectsDir.exists()) {
-            projectsDir.mkdirs()
+        // Process-wide lock + a unique temp name per save: every edit used
+        // to launch its own save on a different thread, and two overlapping
+        // saves of the same project shared ONE temp file -- interleaved
+        // writes could corrupt the JSON, and the loser's fallback copy then
+        // threw FileNotFoundException (an uncaught crash).
+        synchronized(SAVE_LOCK) {
+            if (!projectsDir.exists()) {
+                projectsDir.mkdirs()
+            }
+            val target = projectFile(project.id)
+            val tempFile = File(projectsDir, "${project.id}.json.${System.nanoTime()}.tmp")
+            try {
+                tempFile.writeText(json.encodeToString(project))
+                if (!tempFile.renameTo(target)) {
+                    // renameTo can fail across some filesystems/edge cases;
+                    // fall back to copy so save() still succeeds.
+                    target.writeText(tempFile.readText())
+                }
+            } finally {
+                tempFile.delete()
+            }
         }
-        val target = projectFile(project.id)
-        val tempFile = File(projectsDir, "${project.id}.json.tmp")
-        tempFile.writeText(json.encodeToString(project))
-        if (!tempFile.renameTo(target)) {
-            // renameTo can fail across some filesystems/edge cases; fall
-            // back to copy + delete so save() still succeeds.
-            target.writeText(tempFile.readText())
-            tempFile.delete()
+    }
+
+    /** If "<id>.json" exists but cannot be decoded, renames it to
+     *  "<id>.json.corrupt-<timestamp>" and returns true, so the caller can
+     *  start a fresh project WITHOUT silently overwriting the user's bytes
+     *  (load() returns null both for "missing" and "unreadable"). */
+    fun quarantineIfUnreadable(id: String): Boolean {
+        synchronized(SAVE_LOCK) {
+            val file = projectFile(id)
+            if (!file.exists() || decodeProjectFile(file) != null) return false
+            return file.renameTo(File(projectsDir, "$id.json.corrupt-${System.currentTimeMillis()}"))
         }
     }
 
@@ -85,6 +107,8 @@ class ProjectRepository(private val projectsDir: File) {
     private fun projectFile(id: String): File = File(projectsDir, "$id.json")
 
     companion object {
+        private val SAVE_LOCK = Any()
+
         /** Factory for real Android use: stores projects under the app's
          *  private files directory (files/projects/). */
         fun forContext(context: Context): ProjectRepository =

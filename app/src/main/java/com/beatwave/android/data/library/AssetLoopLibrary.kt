@@ -40,6 +40,8 @@ class AssetLoopLibrary(private val context: Context) {
             WaveformPeaksExtractor.extract(wavBytes)
         } catch (e: IOException) {
             emptyList()
+        } catch (e: RuntimeException) {
+            emptyList() // a malformed bundled WAV must not crash the launch
         }
     }
 

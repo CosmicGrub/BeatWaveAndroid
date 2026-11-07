@@ -11,6 +11,7 @@ import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.beatwave.android.BeatWaveApplication
 import com.google.common.util.concurrent.Futures
@@ -93,7 +94,7 @@ class BeatWavePlaybackService : MediaSessionService() {
                         playbackEngine.stop()
                         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                     }
-                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
+                    return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
                 }
             })
             .build()

@@ -38,8 +38,9 @@ class ImportedSampleIndex(private val storageDir: File) {
      *  if the index doesn't exist yet or fails to parse (e.g. a partially
      *  written file left behind by a process death mid-save) -- mirrors
      *  ProjectRepository's forgiving-on-corruption load style. */
-    @Synchronized
-    fun load(): List<Sample> {
+    fun load(): List<Sample> = synchronized(INDEX_LOCK) { loadLocked() }
+
+    private fun loadLocked(): List<Sample> {
         if (!indexFile.exists()) return emptyList()
         return try {
             json.decodeFromString<List<Sample>>(indexFile.readText())
@@ -56,22 +57,48 @@ class ImportedSampleIndex(private val storageDir: File) {
      *  entry with the same id), writing via a temp file + atomic rename so
      *  a process kill mid-save can never leave a truncated index behind --
      *  mirrors ProjectRepository.save's approach. */
-    @Synchronized
     fun add(sample: Sample) {
-        val updated = load().filterNot { it.id == sample.id } + sample
-        if (!storageDir.exists()) {
-            storageDir.mkdirs()
+        // Shared lock across instances (the ViewModel and any other holder
+        // each build their own ImportedSampleIndex over the same file) and a
+        // unique temp name, same reasoning as ProjectRepository.save.
+        synchronized(INDEX_LOCK) {
+            if (!storageDir.exists()) {
+                storageDir.mkdirs()
+            }
+            // An index that exists but cannot be parsed used to read as
+            // "empty", so the next import silently rewrote it with only the
+            // new sample and lost every earlier one. Keep the unreadable
+            // bytes aside first.
+            if (indexFile.exists() && !isReadable()) {
+                indexFile.renameTo(File(storageDir, "$INDEX_FILE_NAME.corrupt-${System.currentTimeMillis()}"))
+            }
+            val updated = load().filterNot { it.id == sample.id } + sample
+            val tempFile = File(storageDir, "$INDEX_FILE_NAME.${System.nanoTime()}.tmp")
+            try {
+                tempFile.writeText(json.encodeToString(updated))
+                if (!tempFile.renameTo(indexFile)) {
+                    indexFile.writeText(tempFile.readText())
+                }
+            } finally {
+                tempFile.delete()
+            }
         }
-        val tempFile = File(storageDir, "$INDEX_FILE_NAME.tmp")
-        tempFile.writeText(json.encodeToString(updated))
-        if (!tempFile.renameTo(indexFile)) {
-            indexFile.writeText(tempFile.readText())
-            tempFile.delete()
-        }
+    }
+
+    private fun isReadable(): Boolean = try {
+        json.decodeFromString<List<Sample>>(indexFile.readText())
+        true
+    } catch (e: SerializationException) {
+        false
+    } catch (e: IllegalArgumentException) {
+        false
+    } catch (e: IOException) {
+        false
     }
 
     companion object {
         private const val INDEX_FILE_NAME = "index.json"
+        private val INDEX_LOCK = Any()
 
         /** Factory for real Android use: stores the index under the app's
          *  private files directory (files/imported_samples/index.json). */

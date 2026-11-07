@@ -48,6 +48,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -350,14 +353,21 @@ fun GridScreen(
     LaunchedEffect(uiState.pendingShareFilePath) {
         val path = uiState.pendingShareFilePath
         if (path != null) {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
-            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "audio/wav"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "audio/wav"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(sendIntent, "Share BeatWave project"))
+            } catch (e: RuntimeException) {
+                // A file the provider can't map, or no app to share to: used
+                // to crash the app (and the pending path survived a restart).
+                viewModel.reportMessage("Couldn't share the export: ${e.message ?: "no app available"}")
+            } finally {
+                viewModel.shareFileConsumed()
             }
-            context.startActivity(Intent.createChooser(sendIntent, "Share BeatWave project"))
-            viewModel.shareFileConsumed()
         }
     }
 
@@ -365,14 +375,19 @@ fun GridScreen(
     LaunchedEffect(uiState.pendingShareCrashLogPath) {
         val path = uiState.pendingShareCrashLogPath
         if (path != null) {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
-            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(sendIntent, "Share crash log"))
+            } catch (e: RuntimeException) {
+                viewModel.reportMessage("Couldn't share the crash log: ${e.message ?: "no app available"}")
+            } finally {
+                viewModel.crashLogShareConsumed()
             }
-            context.startActivity(Intent.createChooser(sendIntent, "Share crash log"))
-            viewModel.crashLogShareConsumed()
         }
     }
 
@@ -403,6 +418,8 @@ fun GridScreen(
                 title = {
                     Text(
                         project.name,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier
                             .clickable(onClickLabel = "Switch project", role = Role.Button) {
@@ -726,7 +743,8 @@ private fun GridBody(
             samples = samples,
             playheadGridUnitPosition = playheadGridUnitPosition,
             onCellTap = onCellTap,
-            onLongPressBlock = onLongPressBlock
+            onLongPressBlock = onLongPressBlock,
+            onSeek = onSeek
         )
     }
 }
@@ -798,7 +816,11 @@ private fun MelodicGrid(
                     .verticalScroll(verticalScrollState)
                     .testTag("grid_melodic_canvas")
             ) {
-                for (row in rows) {
+                // key(row): without it Compose reuses cells by POSITION, so after the
+                // row list changes (scale switch, track switch, a row vanishing) a
+                // cell kept the pointerInput lambdas of the row that used to sit at
+                // its index and placed notes on the wrong pitch.
+                for (row in rows) key(row) {
                     Row(Modifier.height(ROW_HEIGHT)) {
                         Box(
                             Modifier.width(ROW_LABEL_WIDTH).fillMaxHeight(),
@@ -891,8 +913,13 @@ private fun MelodicGrid(
  * rather than guessed.
  */
 @Composable
-private fun HorizontalScrubStrip(horizontalScrollState: ScrollState, columns: Int, onSeek: (Int) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = ROW_LABEL_WIDTH)) {
+private fun HorizontalScrubStrip(
+    horizontalScrollState: ScrollState,
+    columns: Int,
+    onSeek: (Int) -> Unit,
+    labelWidth: Dp = ROW_LABEL_WIDTH
+) {
+    Row(Modifier.fillMaxWidth().padding(start = labelWidth)) {
         Row(
             Modifier
                 .horizontalScroll(horizontalScrollState)
@@ -946,7 +973,8 @@ private fun DrumGrid(
     samples: Map<String, Sample>,
     playheadGridUnitPosition: Float?,
     onCellTap: (gridColumn: Int, target: GridCellTarget) -> Unit,
-    onLongPressBlock: (LoopBlock) -> Unit
+    onLongPressBlock: (LoopBlock) -> Unit,
+    onSeek: (gridUnit: Int) -> Unit
 ) {
     // drumKitRowSampleIds (Tier 2.4) includes orphaned ids -- a sample no
     // longer in assignedSampleIds but still referenced by an existing
@@ -981,6 +1009,10 @@ private fun DrumGrid(
     val columns = remember(track.loopBlocks) { gridColumnCount(track.loopBlocks) }
 
     Box(Modifier.fillMaxSize()) {
+        // The ruler (seek) used to exist only on melodic tracks, so a drum
+        // track had no way to move the playhead.
+        Column(Modifier.fillMaxSize()) {
+        HorizontalScrubStrip(horizontalScrollState, columns, onSeek, DRUM_ROW_LABEL_WIDTH)
         Column(
             Modifier
                 .fillMaxSize()
@@ -1015,6 +1047,7 @@ private fun DrumGrid(
                     }
                 }
             }
+        }
         }
         if (playheadGridUnitPosition != null) {
             PlayheadOverlay(playheadGridUnitPosition, horizontalScrollState, DRUM_ROW_LABEL_WIDTH)
@@ -1071,6 +1104,15 @@ private fun GridCell(
     description: String,
     testTag: String
 ) {
+    val latestOnTap by rememberUpdatedState(onTap)
+    val latestDrag by rememberUpdatedState(stretchDrag)
+    val stableHandlers = remember {
+        StretchDragHandlers(
+            onDragStart = { latestDrag?.onDragStart?.invoke() },
+            onDragUpdate = { delta -> latestDrag?.onDragUpdate?.invoke(delta) },
+            onDragEnd = { latestDrag?.onDragEnd?.invoke() }
+        )
+    }
     Box(
         Modifier
             .width(CELL_WIDTH)
@@ -1081,7 +1123,7 @@ private fun GridCell(
             .testTag(testTag)
             .then(
                 if (stretchDrag != null) {
-                    Modifier.tapOrDragToStretch(onTap = onTap, handlers = stretchDrag)
+                    Modifier.tapOrDragToStretch(onTap = { latestOnTap() }, handlers = stableHandlers)
                 } else {
                     Modifier.combinedClickable(
                         role = Role.Button,

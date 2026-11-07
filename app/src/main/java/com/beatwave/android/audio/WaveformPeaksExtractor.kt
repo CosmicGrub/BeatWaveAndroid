@@ -134,6 +134,11 @@ object WaveformPeaksExtractor {
             // padding after it that isn't reflected in its own size field.
             val advance = chunkSize + (chunkSize % 2)
             if (advance <= 0L) break // malformed 0-size chunk -- avoid an infinite loop
+            // A chunk claiming to extend past the buffer (or past Int range:
+            // toInt() of a >= 2 GiB size went negative and then threw
+            // StringIndexOutOfBounds despite this extractor's "never throws"
+            // contract) is the last one we can read.
+            if (advance > (bytes.size - chunkDataStart).toLong()) break
             pos = chunkDataStart + advance.toInt()
         }
 

@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -190,7 +191,12 @@ private fun ProjectRow(
                         contentDescription = if (isActive) "${project.name}, current project" else project.name
                     }
                 ) {
-                    Text(project.name, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        project.name,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                     if (isActive) {
                         Spacer(Modifier.width(6.dp))
                         Text(
@@ -268,7 +274,7 @@ private fun ProjectNameDialog(
             // been read, and falls back to a generic "Edit box" otherwise.
             OutlinedTextField(
                 value = text,
-                onValueChange = { text = it },
+                onValueChange = { text = it.take(ArrangementViewModel.MAX_PROJECT_NAME_LENGTH) },
                 singleLine = true,
                 label = { Text("Project name") },
                 modifier = Modifier.fillMaxWidth().testTag("project_name_input")

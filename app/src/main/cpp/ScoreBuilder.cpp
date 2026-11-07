@@ -72,7 +72,7 @@ bool ScoreBuilder::addLoopBlock(
 
     // Mandate 5: pow(2, semitones/12).
     const double pitchRatio = std::pow(2.0, static_cast<double>(pitchSemitones) / 12.0);
-    if (!(pitchRatio > 0.0)) {
+    if (!std::isfinite(pitchRatio) || !(pitchRatio > 0.0)) {
         return false; // guard against NaN/inf from a pathological pitch value
     }
 
@@ -106,7 +106,8 @@ bool ScoreBuilder::addLoopBlock(
     // straight through to MixEngine's `s * block.volume` (only bounded
     // later by the final soft clip), and a negative value would invert that
     // block's phase in the mix instead of attenuating it.
-    block.volume = std::clamp(volume, 0.0f, 1.0f);
+    // std::clamp(NaN, ...) returns NaN, which would be written straight to the device.
+    block.volume = std::isfinite(volume) ? std::clamp(volume, 0.0f, 1.0f) : 1.0f;
     block.pitchRatio = pitchRatio;
     block.sample = std::move(sample);
 

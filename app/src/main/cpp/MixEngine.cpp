@@ -1,5 +1,6 @@
 #include "MixEngine.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -42,7 +43,21 @@ void renderScore(
                 continue;
             }
 
-            for (int32_t i = 0; i < numFrames; ++i) {
+            // Cull: only walk the part of this callback that overlaps the
+            // block's window. Before, every block of every track ran the
+            // per-frame activity test for the whole callback (cost =
+            // blocks x frames even for blocks nowhere near the playhead).
+            // Output is bit-identical: the per-frame derivation below is
+            // unchanged, we just skip frames it would have `continue`d past.
+            const int64_t windowStart = std::max<int64_t>(transportFrameStart, block.blockStartFrame);
+            const int64_t windowEnd = std::min<int64_t>(
+                    transportFrameStart + numFrames, block.blockStartFrame + block.blockLengthFrames);
+            if (windowStart >= windowEnd) {
+                continue;
+            }
+            const int32_t firstFrame = static_cast<int32_t>(windowStart - transportFrameStart);
+            const int32_t endFrame = static_cast<int32_t>(windowEnd - transportFrameStart);
+            for (int32_t i = firstFrame; i < endFrame; ++i) {
                 // Mandate 6 -- THE core derivation: every output frame's
                 // read position is computed fresh from the single absolute
                 // transport counter (transportFrameStart + i), via plain

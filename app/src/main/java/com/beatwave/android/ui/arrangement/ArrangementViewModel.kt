@@ -27,6 +27,11 @@ import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -256,7 +261,22 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
 
     private var previewPlayer: MediaPlayer? = null
 
+    // Single-writer persistence pipeline (replaces one independent
+    // launch{loadProject; save} per edit): rapid edits could run those
+    // coroutines out of order, leaving the engine and the file on an OLDER
+    // project than the one on screen, and could overlap saves. A conflated
+    // channel keeps only the latest pending project and one consumer applies
+    // them strictly in order. [persistLock] also lets switch/delete flush.
+    private val persistChannel = Channel<Pair<Project, Map<String, Sample>>>(Channel.CONFLATED)
+    private val persistLock = Mutex()
+    private val deletedProjectIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private var recordingStartJob: Job? = null
+
     init {
+        playbackEngine.registerClient()
+        viewModelScope.launch(Dispatchers.Default) {
+            for ((project, samples) in persistChannel) applyPersist(project, samples)
+        }
         // Reflect PlaybackEngine's transport/recording state into uiState
         // for the lifetime of this ViewModel -- this is what replaces the
         // old direct playheadJob-driven _uiState.update calls (Phase 3-5).
@@ -294,7 +314,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             // every existing test's/existing install's assumption that the
             // first/default project has that exact id.
             val startProjectId = appPreferences.lastActiveProjectId ?: PROJECT_ID
-            val loadedProject = repository.load(startProjectId)
+            var loadedProject = repository.load(startProjectId)
+            val quarantined = loadedProject == null && repository.quarantineIfUnreadable(startProjectId)
             // Merge bundled + imported samples into the ONE combined library
             // (design item 6) -- background-dispatched same as the rest of
             // this init block. importedSampleIndex.load() is plain JSON file
@@ -319,6 +340,9 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 repository.save(project)
             }
             appPreferences.lastActiveProjectId = startProjectId
+            if (quarantined) {
+                _uiState.update { it.copy(message = "Your last project couldn't be read -- a backup copy of the file was kept and a new project was started.") }
+            }
 
             val started = playbackEngine.initialize(project, samples)
             pushProjectMetadata(project)
@@ -533,6 +557,23 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         pitchSemitones: Float
     ) {
         val project = _uiState.value.project ?: return
+        // Changing a melodic note's pitch moves it to another grid row; if a
+        // note already sits there at an overlapping column the grid keeps
+        // only one of the two (the other becomes invisible and undeletable).
+        val editedTrack = project.tracks.firstOrNull { it.slot == trackSlot }
+        val editedBlock = editedTrack?.loopBlocks?.firstOrNull { it.id == blockId }
+        if (editedTrack != null && editedBlock?.pitchRow != null) {
+            val newRow = kotlin.math.round(pitchSemitones).toInt()
+            val collides = editedTrack.loopBlocks.any { o ->
+                o.id != blockId && o.pitchRow == newRow &&
+                    o.startGridUnit < editedBlock.startGridUnit + editedBlock.lengthGridUnits &&
+                    editedBlock.startGridUnit < o.startGridUnit + o.lengthGridUnits
+            }
+            if (collides) {
+                _uiState.update { it.copy(message = "Another note already sits on that pitch here -- move or delete it first.") }
+                return
+            }
+        }
         val newTracks = project.tracks.map { t ->
             if (t.slot != trackSlot) t else t.copy(
                 loopBlocks = t.loopBlocks.map { b ->
@@ -574,10 +615,35 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update { it.copy(project = newProject) }
         val samples = _uiState.value.samples
         pushProjectMetadata(newProject)
-        viewModelScope.launch(Dispatchers.Default) {
-            playbackEngine.loadProject(newProject, samples)
-            repository.save(newProject)
+        persistChannel.trySend(newProject to samples)
+    }
+
+    /** Applies one queued edit: engine first (only if it is still the
+     *  active project -- an edit queued just before a switch must not
+     *  reload the old project into the engine), then disk. Never throws:
+     *  a disk/native failure is reported instead of crashing the app, and
+     *  NonCancellable so an edit already in flight when the ViewModel is
+     *  cleared still reaches disk. */
+    private suspend fun applyPersist(project: Project, samples: Map<String, Sample>) {
+        if (project.id in deletedProjectIds) return
+        withContext(NonCancellable) {
+            persistLock.withLock {
+                try {
+                    if (project.id == _uiState.value.project?.id) {
+                        playbackEngine.loadProject(project, samples)
+                    }
+                    repository.save(project)
+                } catch (e: Exception) {
+                    _uiState.update { it.copy(message = "Couldn't save the project: ${e.message ?: e::class.java.simpleName}") }
+                }
+            }
         }
+    }
+
+    /** Applies any edit still waiting in the queue, so a project switch or
+     *  delete never leaves a stale edit to land afterwards. */
+    private suspend fun flushPendingPersist() {
+        persistChannel.tryReceive().getOrNull()?.let { (p, s) -> applyPersist(p, s) }
     }
 
     /** Pushes the current project's display name and duration (max loop
@@ -644,6 +710,7 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
             // recording-buffer/transport state from the project being left.
             ensureRecordingFinalizing()?.join()
             playbackEngine.stop()
+            flushPendingPersist()
 
             val project = repository.load(id)?.let { backfillMelodic(it, _uiState.value.samples) } ?: return@launch
             appPreferences.lastActiveProjectId = id
@@ -664,7 +731,7 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
      *  back to "New Project" rather than persisting an unreadable empty
      *  name. */
     fun createNewProject(name: String) {
-        val trimmed = name.trim()
+        val trimmed = name.trim().take(MAX_PROJECT_NAME_LENGTH)
         val newProject = Project(
             id = UUID.randomUUID().toString(),
             name = trimmed.ifEmpty { "New Project" },
@@ -699,21 +766,26 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
      *  purely cosmetic, so unlike [switchToProject] this never touches the
      *  native engine. */
     fun renameProject(id: String, newName: String) {
-        val trimmed = newName.trim()
+        val trimmed = newName.trim().take(MAX_PROJECT_NAME_LENGTH)
         if (trimmed.isEmpty()) {
             _uiState.update { it.copy(message = "Project name can't be empty.") }
             return
         }
         viewModelScope.launch(Dispatchers.Default) {
-            val project = repository.load(id) ?: return@launch
+            // The ACTIVE project must be renamed from the live in-memory
+            // copy: the disk copy can be missing edits still queued, and
+            // replacing the UI state with it silently threw them away.
+            val active = _uiState.value.project?.takeIf { it.id == id }
+            val project = active ?: repository.load(id) ?: return@launch
             val renamed = project.copy(name = trimmed, modifiedAtEpochMs = System.currentTimeMillis())
-            repository.save(renamed)
-            if (_uiState.value.project?.id == id) {
-                pushProjectMetadata(renamed)
+            if (active != null) {
+                rebuildAndPersist(renamed)
+            } else {
+                persistLock.withLock { repository.save(renamed) }
             }
             _uiState.update { current ->
                 current.copy(
-                    project = if (current.project?.id == id) renamed else current.project,
+                    project = current.project?.let { p -> if (p.id == id) p.copy(name = trimmed) else p },
                     projectSummaries = current.projectSummaries.map { summary ->
                         if (summary.id == id) summary.copy(name = trimmed, modifiedAtEpochMs = renamed.modifiedAtEpochMs) else summary
                     }
@@ -730,7 +802,9 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     fun deleteProject(id: String) {
         val wasActive = _uiState.value.project?.id == id
         viewModelScope.launch(Dispatchers.Default) {
-            repository.delete(id)
+            flushPendingPersist()
+            deletedProjectIds.add(id)
+            persistLock.withLock { repository.delete(id) }
             val remainingSummaries = repository.list()
                 .map { ProjectSummary(it.id, it.name, it.modifiedAtEpochMs) }
                 .sortedByDescending { it.modifiedAtEpochMs }
@@ -974,7 +1048,15 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
                 durationMs = pending.durationMs,
                 waveformPeaks = pending.waveformPeaks
             )
-            importedSampleIndex.add(sample)
+            try {
+                importedSampleIndex.add(sample)
+            } catch (e: IOException) {
+                // Disk full etc.: used to be an uncaught crash and left the
+                // decoded WAV orphaned.
+                File(pending.filePath).delete()
+                _uiState.update { it.copy(message = "Couldn't save the imported sound: ${e.message ?: "storage error"}") }
+                return@launch
+            }
             _uiState.update { current ->
                 val mergedSamples = current.samples + (sample.id to sample)
                 current.copy(
@@ -1168,7 +1250,7 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         // [finalizeRecording] already updates recordingTrackSlot synchronously
         // relative to its own native call.
         _uiState.update { it.copy(recordingTrackSlot = trackSlot, recordedFrameCount = 0L) }
-        viewModelScope.launch(Dispatchers.Default) {
+        recordingStartJob = viewModelScope.launch(Dispatchers.Default) {
             // Post-v1 audit/bugfix B1: pass the app's real max song length
             // as the recording cap -- this used to be an independent
             // native-side constant (180s) that had silently drifted out of
@@ -1213,7 +1295,14 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
     private fun ensureRecordingFinalizing(): Job? {
         recordingFinalizeJob?.takeIf { it.isActive }?.let { return it }
         if (_uiState.value.recordingTrackSlot == null) return null
-        val job = viewModelScope.launch(Dispatchers.Default) { finalizeRecording() }
+        // A quick Record-then-Stop must not let the finalize run BEFORE the
+        // native start it is meant to stop (it would find nothing recording,
+        // then the start would succeed and leave an untracked, still-capturing
+        // engine). Wait for any in-flight start first.
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            recordingStartJob?.join()
+            finalizeRecording()
+        }
         recordingFinalizeJob = job
         return job
     }
@@ -1293,6 +1382,8 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         val waveformPeaks = try {
             WaveformPeaksExtractor.extract(outputFile.readBytes())
         } catch (e: IOException) {
+            emptyList()
+        } catch (e: RuntimeException) {
             emptyList()
         }
 
@@ -1461,13 +1552,23 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         // those tests explicitly stops transport (via the UI's Stop button)
         // before its ActivityScenario.close() -- so isStopped is already
         // true by the time onCleared() runs for them.
+        // An edit still queued when the Activity finishes must reach disk
+        // (the consumer coroutine is cancelled with viewModelScope).
+        persistChannel.tryReceive().getOrNull()?.let { (p, _) ->
+            if (p.id !in deletedProjectIds) runCatching { repository.save(p) }
+        }
+        persistChannel.close()
+        // Another live ViewModel (second MainActivity instance) still uses
+        // the shared engine: leave it running.
+        if (!playbackEngine.unregisterClient()) return
         if (!playbackEngine.state.value.isStopped) return
-        runBlocking(Dispatchers.Default) {
+        run {
             val recordingsDir = File(getApplication<Application>().filesDir, RECORDINGS_DIR_NAME)
             if (!recordingsDir.exists()) recordingsDir.mkdirs()
             val discardFile = File(recordingsDir, ".discard-${UUID.randomUUID()}.wav")
-            playbackEngine.shutdown(discardFile)
-            discardFile.delete()
+            // Non-blocking: this used to runBlocking on the main thread
+            // behind engineMutex, which an export holds for its whole render.
+            playbackEngine.shutdownAsync(discardFile) { discardFile.delete() }
         }
     }
 
@@ -1475,6 +1576,10 @@ class ArrangementViewModel(application: Application) : AndroidViewModel(applicat
         private const val PROJECT_ID = "current"
         private const val DEFAULT_BPM = 90
         private const val MAX_TRACKS = 8
+
+        /** Names are user input shown in a title bar and used for the export
+         *  file name; unbounded names broke both (ENAMETOOLONG on export). */
+        const val MAX_PROJECT_NAME_LENGTH = 60
 
         /** Post-v1 audit A1 (import size/DoS hardening): how long
          *  [importLeaseClaimedAtMs] can be held before a later call is
