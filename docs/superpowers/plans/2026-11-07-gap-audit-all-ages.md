@@ -188,12 +188,12 @@ A **guardian PIN** (not a maths puzzle that a bright 8-year-old solves) sets the
 
 ## 11. Decisions needed
 
-1. **Is a children's release a goal, or "kid-friendly mode inside a general app"?** The first brings store-policy and legal weight (§8); the second is lighter but must still protect the microphone, import and share.
+1. ~~Is a children's release a goal, or "kid-friendly mode inside a general app"?~~ **Decided 2026-11-07 (owner): a kid-friendly mode inside the general app.** It is not a separate children's app or a children's-only store listing. Consequences: the Explorer layer is a *mode* (Settings → Experience, guarded by the guardian PIN), not its own launcher icon (resolves decision 6); the app is still described as a general-audience app, so the §8 questions become "what must the kid mode protect?" (microphone, import, share, backup) rather than a children's-app certification checklist. Still worth confirming with current policy text before any store listing says anything about children.
 2. **Should BPM be user-editable?** It gates `TIME-4`, Copy the Beat, and Remix a Song-Kit.
 3. **Will you license or commission real sound content** (kits with pictures)? The 8 synthetic loops cannot carry Explorer/Maker. Sources, licences and provenance need a decision.
 4. **Second language?** If yes, string externalization moves from "deferred" to foundation.
 5. **MIDI input and school/classroom use** — in or out? (The 2026-09-27 roadmap deferred MIDI.)
-6. **Is the Explorer layer a separate launcher entry (its own icon) or a mode inside the app?**
+6. ~~Is the Explorer layer a separate launcher entry (its own icon) or a mode inside the app?~~ **Resolved by decision 1: a mode inside the app.**
 7. **Store plan.** Whether a store release is planned decides how much of §8 is a gate.
 
 ## 12. What this audit did not do
