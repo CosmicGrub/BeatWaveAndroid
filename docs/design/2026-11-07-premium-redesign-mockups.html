@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BeatWave — Premium Redesign Mockups</title>
+<style>
+/* ===================== DESIGN TOKENS ===================== */
+:root{
+  --bg:#0A0C12; --bg2:#10131C; --surface:#161B28; --surface2:#1E2536; --line:#2B3450;
+  --text:#F3F5FB; --muted:#9AA3BC; --primary:#8B6CFF; --primary2:#3CC8FF; --accent:#FF5CA8;
+  --good:#34D399; --warn:#FBBF24; --danger:#FB7185;
+  --drum:#FF6B6B; --bass:#FFB020; --synth:#38D5FF; --vocal:#FF5CA8;
+  --glow:0 0 24px rgba(139,108,255,.45);
+  --r-s:10px; --r-m:16px; --r-l:24px; --page:#05060A; --pagetext:#E9ECF7; --card:#0E111A;
+}
+:root[data-theme="light"]{
+  --bg:#F4F5FA; --bg2:#EBEDF5; --surface:#FFFFFF; --surface2:#F0F2F9; --line:#D9DDEB;
+  --text:#12162A; --muted:#5C647E; --primary:#6B4BFF; --primary2:#0EA5E9; --accent:#E11D74;
+  --good:#059669; --warn:#B45309; --danger:#E11D48;
+  --drum:#EF4444; --bass:#F59E0B; --synth:#0EA5E9; --vocal:#E11D74;
+  --glow:0 6px 20px rgba(107,75,255,.28); --page:#E4E7F2; --pagetext:#12162A; --card:#F8F9FD;
+}
+/* Explorer layer: warm, bright, rounded, big */
+.explorer{
+  --bg:#FFF4DC; --bg2:#FFEBC2; --surface:#FFFFFF; --surface2:#FFF0D0; --line:#F2D9A6;
+  --text:#2B2140; --muted:#6C5E86; --primary:#7A5CFF; --primary2:#00B8D9; --accent:#FF4D8D;
+  --good:#12B76A; --warn:#F79009; --danger:#F04438;
+  --drum:#FF5A5F; --bass:#FFA62B; --synth:#19C3E6; --vocal:#FF4D8D;
+  --glow:0 8px 0 rgba(43,33,64,.12); --r-s:16px; --r-m:24px; --r-l:36px;
+}
+*{box-sizing:border-box;margin:0}
+html{scroll-behavior:smooth}
+body{background:var(--page);color:var(--pagetext);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+/* ===================== PAGE CHROME ===================== */
+.top{position:sticky;top:0;z-index:50;display:flex;gap:18px;align-items:center;padding:12px 28px;background:color-mix(in srgb,var(--page) 88%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid color-mix(in srgb,var(--pagetext) 12%,transparent)}
+.top b{font-size:17px;letter-spacing:.2px}
+.top nav{display:flex;gap:4px;flex-wrap:wrap;margin-left:12px}
+.top nav a{font-size:12.5px;text-decoration:none;padding:5px 10px;border-radius:99px;opacity:.75}
+.top nav a:hover{opacity:1;background:color-mix(in srgb,var(--pagetext) 10%,transparent)}
+.toggle{margin-left:auto;border:1px solid color-mix(in srgb,var(--pagetext) 25%,transparent);background:none;color:inherit;padding:6px 14px;border-radius:99px;cursor:pointer;font:inherit;font-size:13px}
+main{max-width:1280px;margin:0 auto;padding:36px 28px 120px}
+h1{font-size:40px;line-height:1.1;letter-spacing:-.8px;margin-bottom:10px}
+h2{font-size:26px;letter-spacing:-.4px;margin:64px 0 6px}
+h2 small{font-size:13px;font-weight:500;opacity:.6;margin-left:10px;letter-spacing:0}
+.lede{max-width:760px;opacity:.8;font-size:16px}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;padding:3px 9px;border-radius:99px;background:color-mix(in srgb,var(--primary) 22%,transparent);color:var(--primary);margin-right:6px}
+.spec{display:flex;gap:36px;align-items:flex-start;margin:28px 0 0;padding:26px;border-radius:28px;background:var(--card);border:1px solid color-mix(in srgb,var(--pagetext) 9%,transparent);flex-wrap:wrap}
+.spec>.col{flex:1;min-width:300px}
+.spec h3{font-size:19px;margin-bottom:4px}
+.spec p.s{opacity:.7;font-size:13.5px;margin-bottom:12px}
+.notes{padding-left:0;list-style:none;counter-reset:n;display:grid;gap:9px}
+.notes li{counter-increment:n;position:relative;padding-left:34px;font-size:13.5px;opacity:.92}
+.notes li::before{content:counter(n);position:absolute;left:0;top:0;width:23px;height:23px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
+.gaps{margin-top:14px;font-size:12px;opacity:.65}
+.pair{display:flex;gap:26px;flex-wrap:wrap}
+/* ===================== DEVICE FRAMES ===================== */
+.device{position:relative;width:372px;height:780px;border-radius:50px;background:#000;padding:10px;box-shadow:0 30px 70px rgba(0,0,0,.45),inset 0 0 0 2px #2a2a31;flex:none}
+.device.wide{width:880px;height:600px;border-radius:30px;padding:12px}
+.device.mid{width:560px;height:420px;border-radius:30px;padding:12px}
+.screen{position:relative;height:100%;border-radius:40px;overflow:hidden;background:var(--bg);color:var(--text);display:flex;flex-direction:column;font-size:13px}
+.device.wide .screen,.device.mid .screen{border-radius:20px}
+.sb{height:30px;flex:none;display:flex;justify-content:space-between;align-items:center;padding:0 22px;font-size:11.5px;font-weight:600}
+.home-ind{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:120px;height:4px;border-radius:9px;background:var(--text);opacity:.55}
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.i.f{fill:currentColor;stroke:none}
+.btn{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:99px;padding:9px 15px;font:inherit;font-weight:600;color:var(--text);background:var(--surface2);cursor:default}
+.btn.p{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;box-shadow:var(--glow)}
+.btn.rec{background:color-mix(in srgb,var(--danger) 18%,var(--surface2));color:var(--danger)}
+.btn.sq{width:40px;height:40px;padding:0;justify-content:center}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:99px;background:var(--surface);border:1px solid var(--line);font-weight:600;font-size:12.5px;white-space:nowrap}
+.chip.on{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 16%,var(--surface))}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--c,var(--primary));flex:none}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m)}
+.scroll-x{display:flex;gap:8px;overflow:hidden;padding:0 14px}
+.appbar{display:flex;align-items:center;gap:10px;padding:6px 14px 8px}
+.appbar .t{flex:1;min-width:0}
+.appbar .t b{display:block;font-size:17px;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.appbar .t span{font-size:11.5px;color:var(--muted)}
+.row{display:flex;align-items:center;gap:8px}
+.grow{flex:1}
+.muted{color:var(--muted)}
+/* ===================== TRANSPORT ===================== */
+.transport{margin:auto 12px 18px;padding:10px 12px;display:flex;align-items:center;gap:10px;border-radius:26px;background:color-mix(in srgb,var(--surface) 92%,transparent);border:1px solid var(--line);backdrop-filter:blur(10px);box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.transport .time{font-variant-numeric:tabular-nums;line-height:1.15}
+.transport .time b{font-size:16px}
+.transport .time span{font-size:10.5px;color:var(--muted)}
+.play{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;box-shadow:var(--glow)}
+.play svg{width:24px;height:24px}
+/* ===================== PIANO ROLL ===================== */
+.roll{position:relative;flex:1;margin:0 0 0 0;overflow:hidden;display:grid;grid-template-columns:44px 1fr}
+.keys{display:grid;grid-template-rows:repeat(var(--rows),1fr);background:var(--bg2);font-size:9.5px;font-weight:600;border-right:1px solid var(--line)}
+.keys div{display:flex;align-items:center;justify-content:flex-end;padding-right:6px;color:var(--muted);border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+.keys div.blk{background:color-mix(in srgb,var(--bg) 70%,#000)}
+.keys div.root{color:var(--primary);font-weight:800}
+.keys div.out{opacity:.35}
+.field{position:relative;
+  background:
+   linear-gradient(90deg,color-mix(in srgb,var(--line) 85%,transparent) 1px,transparent 1px) 0 0/calc(100%/var(--cols)*4) 100%,
+   linear-gradient(90deg,color-mix(in srgb,var(--line) 40%,transparent) 1px,transparent 1px) 0 0/calc(100%/var(--cols)) 100%,
+   linear-gradient(0deg,color-mix(in srgb,var(--line) 45%,transparent) 1px,transparent 1px) 0 0/100% calc(100%/var(--rows));}
+.band{position:absolute;left:0;right:0;height:calc(100%/var(--rows));top:calc(var(--r)*100%/var(--rows));background:color-mix(in srgb,var(--primary) 10%,transparent)}
+.band.out{background:color-mix(in srgb,#000 22%,transparent)}
+.note{position:absolute;left:calc(var(--c)*100%/var(--cols));width:calc(var(--l)*100%/var(--cols) - 2px);top:calc(var(--r)*100%/var(--rows) + 1px);height:calc(100%/var(--rows) - 2px);border-radius:6px;background:linear-gradient(180deg,color-mix(in srgb,var(--n,var(--primary)) 100%,#fff 12%),var(--n,var(--primary)));box-shadow:0 2px 10px color-mix(in srgb,var(--n,var(--primary)) 55%,transparent)}
+.note.sel{outline:2px solid #fff;outline-offset:1px}
+.playhead{position:absolute;top:0;bottom:0;left:calc(var(--p)*100%/var(--cols));width:2px;background:var(--accent);box-shadow:0 0 14px var(--accent)}
+.playhead::before{content:"";position:absolute;top:-1px;left:-5px;border:6px solid transparent;border-top-color:var(--accent)}
+.ruler{display:grid;grid-template-columns:44px 1fr;flex:none;height:30px;background:var(--bg2);border-bottom:1px solid var(--line);font-size:10px;color:var(--muted);font-weight:700}
+.ruler .rf{position:relative;background:linear-gradient(90deg,var(--line) 1px,transparent 1px) 0 0/calc(100%/var(--bars)) 100%}
+.ruler .rf i{position:absolute;top:8px;font-style:normal;left:calc(var(--b)*100%/var(--bars) + 5px)}
+.loop{position:absolute;left:calc(var(--a)*100%/var(--bars));width:calc(var(--w)*100%/var(--bars));top:0;height:6px;background:var(--primary);border-radius:0 0 6px 6px}
+.vel{display:flex;align-items:flex-end;gap:2px;height:46px;padding:4px 8px 6px 52px;background:var(--bg2);border-top:1px solid var(--line)}
+.vel i{flex:1;background:linear-gradient(0deg,var(--primary),var(--primary2));border-radius:3px 3px 0 0;opacity:.85}
+/* ===================== DRUM GRID ===================== */
+.drum{flex:1;display:flex;flex-direction:column;gap:7px;padding:10px 12px}
+.lane{display:grid;grid-template-columns:78px repeat(16,1fr);gap:3px;align-items:center}
+.lane .nm{display:flex;align-items:center;gap:6px;font-weight:700;font-size:11.5px}
+.lane .nm svg{width:16px;height:16px;color:var(--c)}
+.lane .c{aspect-ratio:1;border-radius:6px;background:var(--surface2)}
+.lane .c.b4{background:color-mix(in srgb,var(--surface2) 70%,var(--line))}
+.lane .c.on{background:var(--c);box-shadow:0 0 10px color-mix(in srgb,var(--c) 60%,transparent)}
+.lane .c.now{outline:2px solid var(--accent)}
+/* ===================== SOUNDS ===================== */
+.kitgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 14px}
+.kit{padding:12px;border-radius:var(--r-m);background:var(--surface);border:1px solid var(--line);display:grid;gap:8px}
+.kit .art{height:70px;border-radius:12px;background:linear-gradient(135deg,var(--a),var(--b));display:grid;place-items:center;color:#fff}
+.kit .art svg{width:34px;height:34px;stroke-width:1.6}
+.kit b{font-size:13px}.kit span{font-size:11px;color:var(--muted)}
+.srow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:14px}
+.srow+.srow{border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.srow .pv{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 22%,var(--surface2));color:var(--c)}
+.wf{display:flex;align-items:center;gap:1.5px;height:24px;flex:1}
+.wf i{width:2.5px;border-radius:2px;background:var(--c);opacity:.85;height:var(--h)}
+/* ===================== MIXER ===================== */
+.mixer{flex:1;display:flex;gap:7px;padding:10px 12px;overflow:hidden}
+.ch{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 4px;border-radius:18px;background:var(--surface);border:1px solid var(--line)}
+.ch .nm{font-size:10.5px;font-weight:800;color:var(--c);text-transform:uppercase;letter-spacing:.4px}
+.knob{width:34px;height:34px;border-radius:50%;background:conic-gradient(from 220deg,var(--c) 0 var(--k),var(--surface2) var(--k) 280deg,transparent 280deg);display:grid;place-items:center}
+.knob::after{content:"";width:24px;height:24px;border-radius:50%;background:var(--surface)}
+.faderwrap{flex:1;display:flex;gap:6px;align-items:stretch;min-height:150px}
+.fader{position:relative;width:8px;border-radius:9px;background:var(--surface2)}
+.fader::after{content:"";position:absolute;left:50%;transform:translateX(-50%);top:var(--f);width:26px;height:14px;border-radius:5px;background:var(--text);box-shadow:0 2px 8px rgba(0,0,0,.4)}
+.vu{position:relative;width:7px;border-radius:9px;background:var(--surface2);overflow:hidden}
+.vu i{position:absolute;bottom:0;left:0;right:0;height:var(--v);background:linear-gradient(0deg,var(--good) 0 62%,var(--warn) 62% 86%,var(--danger) 86%);animation:vu 1.2s ease-in-out infinite alternate}
+@keyframes vu{to{height:calc(var(--v) - 14%)}}
+.ms{display:flex;gap:4px}.ms b{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:10.5px;background:var(--surface2)}
+.ms b.on{background:var(--warn);color:#000}.ms b.mu{background:var(--danger);color:#fff}
+/* ===================== RECORD ===================== */
+.ring{width:210px;height:210px;border-radius:50%;margin:10px auto;display:grid;place-items:center;background:conic-gradient(var(--danger) 0 34%,var(--surface2) 34% 100%);position:relative}
+.ring::before{content:"";position:absolute;inset:12px;border-radius:50%;background:var(--bg)}
+.ring div{position:relative;text-align:center}
+.ring b{font-size:38px;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+.pulse{animation:pulse 1.3s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.08);opacity:.8}}
+.meter{height:12px;border-radius:9px;background:var(--surface2);overflow:hidden;position:relative}
+.meter i{position:absolute;inset:0 auto 0 0;width:var(--v);background:linear-gradient(90deg,var(--good) 0 70%,var(--warn) 70% 90%,var(--danger) 90%);border-radius:9px}
+/* ===================== EXPLORER ===================== */
+.explorer .screen{font-size:15px}
+.pads{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:6px 18px}
+.pad{aspect-ratio:1.08;border-radius:var(--r-l);background:var(--c);display:grid;place-items:center;color:#fff;box-shadow:0 8px 0 color-mix(in srgb,var(--c) 60%,#000),0 14px 26px rgba(0,0,0,.18);position:relative;font-size:58px}
+.pad small{position:absolute;bottom:9px;font-size:12px;font-weight:800;letter-spacing:.4px;font-family:inherit}
+.pad.hit{transform:translateY(5px);box-shadow:0 3px 0 color-mix(in srgb,var(--c) 60%,#000)}
+.strip{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px;padding:0 16px}
+.strip .b{aspect-ratio:1;min-width:0;border-radius:14px;background:var(--surface);border:3px solid var(--line);display:grid;place-items:center;font-size:18px;overflow:hidden}
+.strip .b.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 22%,#fff)}
+.strip .b.now{transform:translateY(-6px);box-shadow:0 8px 0 rgba(43,33,64,.14)}
+.bigplay{width:92px;height:92px;border-radius:50%;background:var(--good);color:#fff;display:grid;place-items:center;box-shadow:0 8px 0 #0a7a47;margin:0 auto}
+.bigplay svg{width:42px;height:42px}
+.speech{padding:12px 16px;margin:0 18px;border-radius:22px;background:var(--surface);border:3px solid var(--line);font-weight:800;font-size:17px;display:flex;align-items:center;gap:10px}
+.kbtn{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:22px;background:var(--surface);border:3px solid var(--line);font-size:26px;font-weight:800;color:var(--text)}
+.stars{display:flex;gap:8px;justify-content:center;font-size:36px}
+/* ===================== MISC SCREENS ===================== */
+.hero{margin:6px 14px 0;padding:18px;border-radius:26px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary) 75%,#000),color-mix(in srgb,var(--primary2) 70%,#000));color:#fff;position:relative;overflow:hidden}
+.hero h4{font-size:22px;letter-spacing:-.4px;max-width:200px;line-height:1.15}
+.hero p{opacity:.85;margin:6px 0 12px;font-size:12.5px;max-width:200px}
+.hero .blob{position:absolute;right:-30px;top:-20px;width:150px;height:150px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.35),transparent 70%)}
+.pcard{padding:10px;border-radius:20px;background:var(--surface);border:1px solid var(--line);display:grid;gap:8px}
+.thumb{height:78px;border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--a) 35%,var(--bg2)),color-mix(in srgb,var(--b) 28%,var(--bg2)));position:relative;overflow:hidden}
+.thumb i{position:absolute;height:7px;border-radius:4px;background:var(--a);opacity:.95}
+.sect{padding:14px 16px 6px;display:flex;justify-content:space-between;font-weight:800;font-size:15px}
+.sect span{font-size:12px;color:var(--primary);font-weight:700}
+.nav{margin-top:auto;display:flex;justify-content:space-around;padding:10px 6px 22px;background:var(--bg2);border-top:1px solid var(--line);font-size:10.5px;font-weight:600}
+.nav div{display:grid;justify-items:center;gap:3px;color:var(--muted)}
+.nav div.on{color:var(--primary)}
+.seg{display:flex;padding:3px;border-radius:99px;background:var(--surface2);margin:0 14px}
+.seg div{flex:1;text-align:center;padding:8px 6px;border-radius:99px;font-weight:700;font-size:12.5px;color:var(--muted)}
+.seg div.on{background:var(--surface);color:var(--text);box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.sheet{margin-top:auto;border-radius:30px 30px 0 0;background:var(--surface);border-top:1px solid var(--line);padding:10px 16px 28px;box-shadow:0 -20px 50px rgba(0,0,0,.35)}
+.grab{width:42px;height:4px;border-radius:9px;background:var(--line);margin:0 auto 12px}
+.toggle-row{display:flex;align-items:center;gap:12px;padding:12px 14px}
+.toggle-row+.toggle-row{border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.sw{width:44px;height:26px;border-radius:99px;background:var(--surface2);position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--muted)}
+.sw.on{background:var(--primary)}.sw.on::after{left:21px;background:#fff}
+.pin{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:0 40px}
+.pin div{aspect-ratio:1.5;border-radius:18px;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;font-size:24px;font-weight:700}
+.dots{display:flex;gap:12px;justify-content:center;margin:14px 0}.dots i{width:13px;height:13px;border-radius:50%;border:2px solid var(--primary)}.dots i.f{background:var(--primary)}
+.xcard{margin:0 14px;border-radius:26px;overflow:hidden;background:linear-gradient(160deg,#2a1b6e,#0b3b5c);color:#fff;padding:18px}
+.xwave{display:flex;align-items:center;gap:2px;height:64px}.xwave i{flex:1;background:linear-gradient(0deg,#8B6CFF,#3CC8FF);border-radius:3px;height:var(--h)}
+.lufs{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px}
+.big .screen{font-size:17px}
+.big .chip,.big .btn{font-size:16px;padding:12px 18px}
+.hc{--bg:#000;--bg2:#000;--surface:#0b0b0b;--surface2:#1a1a1a;--line:#fff;--text:#fff;--muted:#e5e5e5;--primary:#FFD400;--primary2:#FFD400;--accent:#00E5FF}
+.hc .note{background:#FFD400;box-shadow:none;outline:2px solid #000}
+.hc .btn.p,.hc .play{background:#FFD400;color:#000;box-shadow:none}
+.focus{outline:3px solid var(--accent);outline-offset:3px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:13px}
+.legend span{display:flex;gap:7px;align-items:center}
+.sw-c{width:18px;height:18px;border-radius:6px}
+.tokens{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:16px}
+.tok{border-radius:16px;overflow:hidden;border:1px solid color-mix(in srgb,var(--pagetext) 12%,transparent);font-size:12px}
+.tok i{display:block;height:54px}.tok div{padding:8px 10px;background:var(--card)}
+.tok b{display:block;font-size:12.5px}.tok span{opacity:.6}
+.typescale{display:grid;gap:8px;margin-top:16px}
+.typescale div{display:flex;align-items:baseline;gap:18px}.typescale small{width:110px;opacity:.55;font-size:12px}
+@media (prefers-reduced-motion:reduce){.vu i,.pulse,.playhead.anim{animation:none!important}}
+@media (max-width:760px){.device.wide{width:100%;height:520px}.device.mid{width:100%}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+<symbol id="play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none"/></symbol>
+<symbol id="pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4.2" height="15" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+<symbol id="stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.4" fill="currentColor" stroke="none"/></symbol>
+<symbol id="rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="currentColor" stroke="none"/></symbol>
+<symbol id="skipstart" viewBox="0 0 24 24"><path d="M6 5v14M19 5.5v13L9 12z"/></symbol>
+<symbol id="undo" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M4 12h10a6 6 0 0 1 0 12"/></symbol>
+<symbol id="redo" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5M20 12H10a6 6 0 0 0 0 12"/></symbol>
+<symbol id="metro" viewBox="0 0 24 24"><path d="M8 21 5.5 6.5a1 1 0 0 1 1-1.2h7a1 1 0 0 1 1 1.2L12.5 21zM10 16l5-9"/></symbol>
+<symbol id="loop" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/></symbol>
+<symbol id="mixer" viewBox="0 0 24 24"><path d="M5 3v18M12 3v18M19 3v18"/><circle cx="5" cy="14" r="2.2" fill="var(--bg)"/><circle cx="12" cy="8" r="2.2" fill="var(--bg)"/><circle cx="19" cy="15" r="2.2" fill="var(--bg)"/></symbol>
+<symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+<symbol id="share" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></symbol>
+<symbol id="drum" viewBox="0 0 24 24"><ellipse cx="12" cy="8" rx="8" ry="3"/><path d="M4 8v8c0 1.7 3.6 3 8 3s8-1.3 8-3V8M8 11l-2 7M16 11l2 7"/></symbol>
+<symbol id="bass" viewBox="0 0 24 24"><path d="M3 18 16 5l3 3L6 21zM16 5l3-2 2 2-2 3"/></symbol>
+<symbol id="keys" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14M7 5v8M13 5v8M19 5v8" /></symbol>
+<symbol id="wave" viewBox="0 0 24 24"><path d="M3 12h2M7 7v10M11 4v16M15 8v8M19 10v4M22 12h0"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+<symbol id="home" viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4z"/></symbol>
+<symbol id="trophy" viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 14v4M8 21h8"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="vol" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16.5 8.5a5 5 0 0 1 0 7"/></symbol>
+<symbol id="note" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+</defs>
+</svg>
+
+<header class="top">
+  <b>BeatWave · Premium Redesign</b>
+  <nav>
+    <a href="#system">Design system</a><a href="#start">Start &amp; projects</a><a href="#studio">Studio</a>
+    <a href="#sounds">Sounds &amp; edit</a><a href="#pro">Mixer &amp; record</a><a href="#share">Export</a>
+    <a href="#explorer">Explorer (4–8)</a><a href="#activities">Activities</a><a href="#guardian">Guardian</a>
+    <a href="#access">Accessibility</a><a href="#large">Large screens</a>
+  </nav>
+  <button class="toggle" id="themeBtn" aria-label="Toggle light and dark theme">Light / Dark</button>
+</header>
+
+<main>
+<span class="tag">Proposal · nothing here is built</span><span class="tag">2026-11-07</span>
+<h1>BeatWave, redesigned for every age</h1>
+<p class="lede">One engine and one project format, three experience layers — <b>Explorer</b> (pre-readers to ~8), <b>Studio</b> (9 and up), <b>Pro</b> (power users) — all on a single design system with dark and light themes. Each screen below is annotated; the small notes under each screen name the gaps it closes (<b>F#</b> features, <b>N#</b> functions, <b>A#</b> activities, <b>P#</b> performance) from <code>2026-11-07-gap-audit-all-ages.md</code>. Use the Light / Dark button above. The Explorer screens keep their own warm palette in both themes.</p>
+<div class="legend">
+  <span><i class="sw-c" style="background:var(--drum)"></i>Drums</span>
+  <span><i class="sw-c" style="background:var(--bass)"></i>Bass</span>
+  <span><i class="sw-c" style="background:var(--synth)"></i>Synth</span>
+  <span><i class="sw-c" style="background:var(--vocal)"></i>Vocal</span>
+</div>
+
+<!-- ============================================================ DESIGN SYSTEM -->
+<h2 id="system">1 · Design system <small>tokens, type, motion</small></h2>
+<p class="lede">Every colour is a role, never a hex in a screen. That is what makes dark/light, high-contrast and the Explorer palette one switch instead of three apps.</p>
+<div class="spec"><div class="col">
+  <h3>Colour roles</h3><p class="s">Live — flips with the theme button.</p>
+  <div class="tokens">
+    <div class="tok"><i style="background:var(--bg)"></i><div><b>Canvas</b><span>screen background</span></div></div>
+    <div class="tok"><i style="background:var(--surface)"></i><div><b>Surface</b><span>cards, sheets</span></div></div>
+    <div class="tok"><i style="background:var(--surface2)"></i><div><b>Surface 2</b><span>controls, wells</span></div></div>
+    <div class="tok"><i style="background:linear-gradient(135deg,var(--primary),var(--primary2))"></i><div><b>Signature</b><span>primary → cyan</span></div></div>
+    <div class="tok"><i style="background:var(--accent)"></i><div><b>Playhead / accent</b><span>the live thing</span></div></div>
+    <div class="tok"><i style="background:var(--good)"></i><div><b>Good</b><span>safe level</span></div></div>
+    <div class="tok"><i style="background:var(--warn)"></i><div><b>Warn</b><span>hot level</span></div></div>
+    <div class="tok"><i style="background:var(--danger)"></i><div><b>Danger / record</b><span>clip, rec, delete</span></div></div>
+  </div>
+  <h3 style="margin-top:22px">Type scale</h3><p class="s">System font (no download, no licence), tabular numbers for every time and tempo readout.</p>
+  <div class="typescale">
+    <div><small>Display 32/36</small><span style="font-size:32px;font-weight:800;letter-spacing:-.8px">First beat</span></div>
+    <div><small>Title 20/24</small><span style="font-size:20px;font-weight:800">Midnight Groove</span></div>
+    <div><small>Body 15/22</small><span style="font-size:15px">Tap a pad to hear it.</span></div>
+    <div><small>Label 12/16</small><span style="font-size:12px;font-weight:700;letter-spacing:.5px">96 BPM · C MINOR PENT.</span></div>
+    <div><small>Time 16 tabular</small><span style="font-size:16px;font-weight:700;font-variant-numeric:tabular-nums">1:02.4</span></div>
+  </div>
+</div><div class="col">
+  <h3>Rules</h3>
+  <ol class="notes">
+    <li><b>Roles, not hexes.</b> Screens read tokens; dark, light, high-contrast and Explorer are four token sets (gap F6).</li>
+    <li><b>Instrument colour is data.</b> Drums coral, bass amber, synth cyan, vocal pink — on notes, pills, mixer strips and thumbnails, so a project can be read at a glance.</li>
+    <li><b>One glow = live.</b> Only the playhead, the play button and the selected track glow. Nothing else competes.</li>
+    <li><b>Targets:</b> 48 dp minimum in Studio/Pro, 64 dp in Explorer; row height 28 dp is allowed only inside the grid where a note is larger than its cell (gap N8).</li>
+    <li><b>Motion:</b> 120–220 ms ease-out for state, spring for pads; the playhead is drawn, not recomposed; everything honours “reduce motion” (gap P2).</li>
+    <li><b>Haptics:</b> tick on place, double-tick on delete, soft thud on a pad.</li>
+    <li><b>Radius:</b> 10 / 16 / 24 (Studio), 16 / 24 / 36 (Explorer). Elevation by tint first, shadow second.</li>
+  </ol>
+  <p class="gaps">Closes F6, N8, P13 · builds on roadmap <code>UX-POLISH</code>, <code>PERF-6</code></p>
+</div></div>
+
+<!-- ============================================================ START -->
+<h2 id="start">2 · Start &amp; projects <small>onboarding · home</small></h2>
+<div class="spec">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div style="padding:6px 22px 0"><div class="muted" style="font-weight:700;letter-spacing:.6px;font-size:11px">STEP 1 OF 3</div></div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 24px">
+      <div style="display:flex;gap:8px;justify-content:center;margin-bottom:22px">
+        <div style="width:78px;height:78px;border-radius:24px;background:var(--drum);display:grid;place-items:center;color:#fff;transform:rotate(-6deg)"><svg class="i" style="width:36px;height:36px"><use href="#drum"/></svg></div>
+        <div style="width:78px;height:78px;border-radius:24px;background:var(--synth);display:grid;place-items:center;color:#fff;transform:translateY(-10px)"><svg class="i" style="width:36px;height:36px"><use href="#keys"/></svg></div>
+        <div style="width:78px;height:78px;border-radius:24px;background:var(--vocal);display:grid;place-items:center;color:#fff;transform:rotate(6deg)"><svg class="i" style="width:36px;height:36px"><use href="#mic"/></svg></div>
+      </div>
+      <h3 style="font-size:30px;line-height:1.08;letter-spacing:-.8px;text-align:center">Make your first beat in 60 seconds</h3>
+      <p class="muted" style="text-align:center;margin-top:10px;font-size:14.5px">Tap a sound, drop it in, press play. No account, no setup.</p>
+    </div>
+    <div style="padding:0 22px 14px;display:grid;gap:10px">
+      <div class="btn p" style="justify-content:center;padding:15px;font-size:16px">Start</div>
+      <div class="btn" style="justify-content:center;background:transparent;color:var(--muted)">I've made music before</div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="t"><b>Your music</b><span>6 projects · all saved on this device</span></div><div class="btn sq"><svg class="i"><use href="#search"/></svg></div><div class="btn sq"><svg class="i"><use href="#gear"/></svg></div></div>
+    <div class="hero"><div class="blob"></div><h4>First Beat</h4><p>A guided 60-second start. Hear it as you build it.</p><div class="btn" style="background:#fff;color:#2a1b6e">Begin <svg class="i"><use href="#play"/></svg></div></div>
+    <div class="sect">Start from a groove <span>See all</span></div>
+    <div class="scroll-x">
+      <div class="pcard" style="width:128px;flex:none"><div class="thumb" style="--a:var(--drum);--b:var(--synth)"><i style="left:8px;top:14px;width:30px"></i><i style="left:44px;top:14px;width:20px"></i><i style="left:14px;top:34px;width:44px;background:var(--bass)"></i><i style="left:20px;top:54px;width:56px;background:var(--synth)"></i></div><b style="font-size:12.5px">Lo-fi Chill</b><span class="muted" style="font-size:11px">4 bars · 78 BPM</span></div>
+      <div class="pcard" style="width:128px;flex:none"><div class="thumb" style="--a:var(--bass);--b:var(--vocal)"><i style="left:10px;top:14px;width:50px"></i><i style="left:20px;top:34px;width:30px;background:var(--drum)"></i><i style="left:38px;top:54px;width:40px;background:var(--vocal)"></i></div><b style="font-size:12.5px">Four on the Floor</b><span class="muted" style="font-size:11px">4 bars · 124 BPM</span></div>
+      <div class="pcard" style="width:128px;flex:none"><div class="thumb" style="--a:var(--synth);--b:var(--primary)"><i style="left:6px;top:20px;width:60px"></i><i style="left:30px;top:44px;width:36px;background:var(--vocal)"></i></div><b style="font-size:12.5px">Dream Pop</b><span class="muted" style="font-size:11px">8 bars · 92 BPM</span></div>
+    </div>
+    <div class="sect">Recent <span>Sort</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 14px">
+      <div class="pcard"><div class="thumb" style="--a:var(--drum);--b:var(--bass)"><i style="left:8px;top:12px;width:70px"></i><i style="left:22px;top:30px;width:50px;background:var(--synth)"></i><i style="left:14px;top:50px;width:60px;background:var(--bass)"></i></div><b style="font-size:12.5px">Midnight Groove</b><span class="muted" style="font-size:11px">Edited today · 1:42</span></div>
+      <div class="pcard"><div class="thumb" style="--a:var(--synth);--b:var(--vocal)"><i style="left:12px;top:14px;width:40px"></i><i style="left:34px;top:34px;width:56px;background:var(--vocal)"></i></div><b style="font-size:12.5px">Bus Ride Beat</b><span class="muted" style="font-size:11px">Yesterday · 0:48</span></div>
+    </div>
+    <div class="nav"><div class="on"><svg class="i"><use href="#home"/></svg>Music</div><div><svg class="i"><use href="#note"/></svg>Sounds</div><div><svg class="i"><use href="#trophy"/></svg>Play</div><div><svg class="i"><use href="#gear"/></svg>Settings</div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Onboarding &amp; project home</h3><p class="s">Left: first launch (3 short steps, skippable). Right: home with templates and picture thumbnails.</p>
+    <ol class="notes">
+      <li><b>First Beat is the front door.</b> The first thing a new user can do is make a sound, not read a menu (F2, A1).</li>
+      <li><b>Skip for experts</b> — “I've made music before” goes straight to the Studio and never asks again.</li>
+      <li><b>Thumbnails drawn from the notes</b> so a child can find <i>their</i> project by picture, not name (N11).</li>
+      <li><b>“All saved on this device”</b> states the privacy fact in plain words where a guardian will see it (§8 of the audit).</li>
+      <li><b>Templates row</b> — start from a groove, remix, make it yours (F18, A4).</li>
+      <li><b>Bottom navigation</b> replaces the old title-tap-for-projects: Music · Sounds · Play (activities) · Settings (F13).</li>
+    </ol>
+    <p class="gaps">Closes F2, F13, F18, N11 · A1, A4 · roadmap <code>PRODUCT-3</code></p>
+  </div>
+</div>
+
+<!-- ============================================================ STUDIO -->
+<h2 id="studio">3 · Studio <small>the main grid, both kinds</small></h2>
+<div class="spec">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Midnight Groove</b><span>Saved · 1:42 · 96 BPM</span></div><div class="btn sq"><svg class="i"><use href="#undo"/></svg></div><div class="btn sq" style="opacity:.45"><svg class="i"><use href="#redo"/></svg></div></div>
+    <div class="scroll-x" style="padding-bottom:8px">
+      <div class="chip on" style="--c:var(--synth)"><span class="dot" style="--c:var(--synth)"></span>Synth Arp</div>
+      <div class="chip"><span class="dot" style="--c:var(--drum)"></span>Drums</div>
+      <div class="chip"><span class="dot" style="--c:var(--bass)"></span>Bass Riff</div>
+      <div class="chip"><span class="dot" style="--c:var(--vocal)"></span>Vocal</div>
+      <div class="chip" style="opacity:.6"><svg class="i" style="width:15px;height:15px"><use href="#plus"/></svg></div>
+    </div>
+    <div class="scroll-x" style="padding-bottom:10px">
+      <div class="chip rec" style="background:color-mix(in srgb,var(--danger) 16%,var(--surface));color:var(--danger);border-color:transparent"><svg class="i f" style="width:12px;height:12px"><use href="#rec"/></svg>Rec</div>
+      <div class="chip"><svg class="i" style="width:15px;height:15px"><use href="#note"/></svg>Sounds</div>
+      <div class="chip on">C minor pent. <svg class="i" style="width:14px;height:14px"><use href="#chev"/></svg></div>
+      <div class="chip">96 BPM</div>
+    </div>
+    <div class="ruler" style="--bars:4"><div></div><div class="rf"><div class="loop" style="--a:0;--w:2"></div><i style="--b:0">1</i><i style="--b:1">2</i><i style="--b:2">3</i><i style="--b:3">4</i></div></div>
+    <div class="roll" style="--rows:13;--cols:16">
+      <div class="keys" id="keysA"></div>
+      <div class="field" id="fieldA" style="--rows:13;--cols:16"></div>
+    </div>
+    <div class="transport">
+      <div class="btn sq"><svg class="i"><use href="#skipstart"/></svg></div>
+      <div class="play"><svg><use href="#pause"/></svg></div>
+      <div class="time grow"><b>0:05.2</b><br><span>Bar 3 · beat 2</span></div>
+      <div class="btn sq" style="color:var(--primary)"><svg class="i"><use href="#loop"/></svg></div>
+      <div class="btn sq"><svg class="i"><use href="#metro"/></svg></div>
+      <div class="btn sq"><svg class="i"><use href="#mixer"/></svg></div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Midnight Groove</b><span>Drums · 4 sounds</span></div><div class="btn sq"><svg class="i"><use href="#undo"/></svg></div><div class="btn sq" style="opacity:.45"><svg class="i"><use href="#redo"/></svg></div></div>
+    <div class="scroll-x" style="padding-bottom:10px">
+      <div class="chip"><span class="dot" style="--c:var(--synth)"></span>Synth Arp</div>
+      <div class="chip on"><span class="dot" style="--c:var(--drum)"></span>Drums</div>
+      <div class="chip"><span class="dot" style="--c:var(--bass)"></span>Bass Riff</div>
+      <div class="chip"><span class="dot" style="--c:var(--vocal)"></span>Vocal</div>
+    </div>
+    <div class="scroll-x" style="padding-bottom:10px">
+      <div class="chip"><svg class="i" style="width:15px;height:15px"><use href="#note"/></svg>Sounds</div>
+      <div class="chip">Swing 0%</div><div class="chip">96 BPM</div>
+    </div>
+    <div class="ruler" style="--bars:4"><div></div><div class="rf"><i style="--b:0">1</i><i style="--b:1">2</i><i style="--b:2">3</i><i style="--b:3">4</i></div></div>
+    <div class="drum" id="drumA" style="flex:none"></div>
+    <div class="card" style="margin:6px 12px 8px;padding:12px;flex:1;display:flex;flex-direction:column;gap:10px;min-height:0">
+      <div class="row" style="font-weight:800;font-size:13px"><span class="grow">Step volume · Kick</span><span class="muted" style="font-weight:600;font-size:11.5px">tap a step to set</span></div>
+      <div class="vel" id="velD" style="padding:0;background:transparent;border:0;height:60px"></div>
+      <div class="row" style="flex-wrap:wrap"><div class="chip on">Humanize</div><div class="chip">Fill</div><div class="chip">Randomize</div><div class="chip">Clear lane</div></div>
+    </div>
+    <div class="transport">
+      <div class="btn sq"><svg class="i"><use href="#skipstart"/></svg></div>
+      <div class="play"><svg><use href="#play"/></svg></div>
+      <div class="time grow"><b>0:00.0</b><br><span>Bar 1 · beat 1</span></div>
+      <div class="btn sq"><svg class="i"><use href="#loop"/></svg></div>
+      <div class="btn sq" style="color:var(--primary)"><svg class="i"><use href="#metro"/></svg></div>
+      <div class="btn sq"><svg class="i"><use href="#mixer"/></svg></div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Studio — melodic and drum grids</h3><p class="s">Same screen skeleton; the body changes with the track's kind.</p>
+    <ol class="notes">
+      <li><b>Track pills own a full-width row</b> (just shipped) and carry the instrument colour + sound name.</li>
+      <li><b>Tool row:</b> Record, Sounds, key/scale, tempo — each ≥ 48 dp, scrolls if the screen is narrow (N8, N9).</li>
+      <li><b>Undo / redo in the app bar</b> — the safety net for every age (F8).</li>
+      <li><b>Note names + key.</b> Rows read <b>C5, Eb5, G4</b> with the root in the accent colour; out-of-scale rows are dimmed, not hidden (F10, N13).</li>
+      <li><b>Loop brace on the ruler</b> (drag to set bars), plus a loop toggle and a <b>metronome</b> in the transport (F9).</li>
+      <li><b>Playhead is drawn in the draw phase</b> and the view follows it past the edge (N6, P2).</li>
+      <li><b>Go-to-start</b> button and a tappable ruler replace seek-by-tiny-strip (N7).</li>
+      <li><b>Drum lanes</b> use real icons + names, 16 steps a bar, accent-ringed current step; swing and tempo in the tool row.</li>
+    </ol>
+    <p class="gaps">Closes F8, F9, F10, F6, N6, N7, N8, N9, N13 · roadmap <code>UX-4</code>, <code>TIME-1</code>, <code>TIME-3</code>, <code>PRODUCT-1</code>, <code>GAP1-7</code></p>
+  </div>
+</div>
+
+<!-- ============================================================ SOUNDS & EDIT -->
+<h2 id="sounds">4 · Sounds &amp; editing <small>library · note editor</small></h2>
+<div class="spec">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Sounds</b><span>For track 1 · Synth</span></div></div>
+    <div style="padding:0 14px 10px"><div class="chip" style="width:100%;padding:11px 14px;color:var(--muted);font-weight:500"><svg class="i"><use href="#search"/></svg>Search sounds, moods, genres</div></div>
+    <div class="scroll-x" style="padding-bottom:10px"><div class="chip on">All</div><div class="chip"><span class="dot" style="--c:var(--drum)"></span>Drums</div><div class="chip"><span class="dot" style="--c:var(--bass)"></span>Bass</div><div class="chip"><span class="dot" style="--c:var(--synth)"></span>Synth</div><div class="chip"><span class="dot" style="--c:var(--vocal)"></span>Vocal</div></div>
+    <div class="sect" style="padding-top:2px">Kits <span>See all</span></div>
+    <div class="kitgrid">
+      <div class="kit"><div class="art" style="--a:#FF6B6B;--b:#FF9A5C"><svg class="i"><use href="#drum"/></svg></div><b>Boom Bap Kit</b><span>8 sounds · Hip-hop</span></div>
+      <div class="kit"><div class="art" style="--a:#38D5FF;--b:#7C5CFF"><svg class="i"><use href="#keys"/></svg></div><b>Glass Keys</b><span>6 sounds · Chill</span></div>
+    </div>
+    <div class="sect">Synths <span>12</span></div>
+    <div class="card" style="margin:0 14px;overflow:hidden">
+      <div class="srow" style="--c:var(--synth)"><div class="pv"><svg class="i f" style="width:16px;height:16px"><use href="#play"/></svg></div><div class="grow"><b>Synth Arp</b><div class="muted" style="font-size:11px">C · 90 BPM · 2.7 s</div></div><div class="wf" style="--c:var(--synth);max-width:90px"></div><svg class="i" style="color:var(--good)"><use href="#check"/></svg></div>
+      <div class="srow" style="--c:var(--synth)"><div class="pv"><svg class="i f" style="width:16px;height:16px"><use href="#play"/></svg></div><div class="grow"><b>Synth Chord</b><div class="muted" style="font-size:11px">D · 90 BPM · 2.7 s</div></div><div class="wf" style="--c:var(--synth);max-width:90px"></div><div class="btn" style="padding:6px 12px;background:color-mix(in srgb,var(--primary) 22%,var(--surface2));color:var(--primary)">Use</div></div>
+      <div class="srow" style="--c:var(--synth)"><div class="pv"><svg class="i f" style="width:16px;height:16px"><use href="#play"/></svg></div><div class="grow"><b>Pulse Lead</b><div class="muted" style="font-size:11px">A · 110 BPM · 1.9 s</div></div><div class="wf" style="--c:var(--synth);max-width:90px"></div><div class="btn" style="padding:6px 12px;background:color-mix(in srgb,var(--primary) 22%,var(--surface2));color:var(--primary)">Use</div></div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Midnight Groove</b><span>1 note selected</span></div><div class="btn sq"><svg class="i"><use href="#undo"/></svg></div></div>
+    <div class="ruler" style="--bars:4"><div></div><div class="rf"><i style="--b:0">1</i><i style="--b:1">2</i><i style="--b:2">3</i><i style="--b:3">4</i></div></div>
+    <div class="roll" style="--rows:9;--cols:16;flex:none;height:230px">
+      <div class="keys" id="keysB"></div><div class="field" id="fieldB" style="--rows:9;--cols:16"></div>
+    </div>
+    <div class="vel" id="velB"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="row" style="margin-bottom:12px"><div class="grow"><b style="font-size:16px">Note · Eb5</b><div class="muted" style="font-size:11.5px">Bar 2 · beat 3 · length ½ beat</div></div><div class="btn sq" style="color:var(--danger)"><svg class="i"><use href="#trash"/></svg></div></div>
+      <div style="display:grid;gap:12px">
+        <div><div class="row" style="font-size:12px;font-weight:700;margin-bottom:6px"><span class="grow">Volume</span><span class="muted">−6 dB</span></div><div class="meter" style="height:8px"><i style="--v:62%;background:var(--primary)"></i></div></div>
+        <div><div class="row" style="font-size:12px;font-weight:700;margin-bottom:6px"><span class="grow">Fine tune</span><span class="muted">+12 cents</span></div><div class="meter" style="height:8px"><i style="--v:54%;background:var(--primary2)"></i></div></div>
+        <div class="row"><div class="chip">Length ½</div><div class="chip">Octave ↑</div><div class="chip">Copy</div><div class="chip on">Duplicate bar</div></div>
+      </div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Sound library v2 &amp; the note editor</h3><p class="s">Left: browse by kit with pictures, preview by tapping. Right: select a note and a bottom sheet appears — no hidden long-press.</p>
+    <ol class="notes">
+      <li><b>Search + category chips + kits with art.</b> The old alphabetical list of 8 becomes a browsable library (F4, N14).</li>
+      <li><b>Tap the play button to hear it</b> before choosing; waveform and root key shown on each row (F3, F10).</li>
+      <li><b>“Use” replaces “Add/Remove”</b> wording; a check mark shows what the track already uses.</li>
+      <li><b>Selecting a note opens a bottom sheet</b>, not a modal dialog — volume, fine-tune, length, octave, copy, duplicate-bar, delete. A selection ring marks the note; the velocity lane sits under the grid (N1, F11).</li>
+      <li><b>Pitch changes can’t hide another note</b> — if the target row is taken the sheet says so (shipped as a guard; this is its UI).</li>
+      <li><b>Delete is in the sheet and undoable</b> with a “Note deleted · Undo” snackbar (F8).</li>
+    </ol>
+    <p class="gaps">Closes F3, F4, F8, F10, F11, N1, N14 · roadmap <code>PRODUCT-2</code>, <code>PRODUCT-6b</code>, <code>UX-4</code>, <code>UX-5</code>, <code>INSTR-4</code></p>
+  </div>
+</div>
+
+<!-- ============================================================ PRO -->
+<h2 id="pro">5 · Mixer &amp; recording <small>Pro</small></h2>
+<div class="spec">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Mixer</b><span>Master −1.2 dB · limiter on</span></div><div class="btn sq"><svg class="i"><use href="#gear"/></svg></div></div>
+    <div class="mixer">
+      <div class="ch" style="--c:var(--synth)"><div class="nm">Synth</div><div class="knob" style="--k:150deg"></div><div class="faderwrap"><div class="fader" style="--f:28%"></div><div class="vu"><i style="--v:62%"></i></div></div><div class="ms"><b class="mu">M</b><b>S</b></div></div>
+      <div class="ch" style="--c:var(--drum)"><div class="nm">Drums</div><div class="knob" style="--k:140deg"></div><div class="faderwrap"><div class="fader" style="--f:18%"></div><div class="vu"><i style="--v:78%"></i></div></div><div class="ms"><b>M</b><b>S</b></div></div>
+      <div class="ch" style="--c:var(--bass)"><div class="nm">Bass</div><div class="knob" style="--k:120deg"></div><div class="faderwrap"><div class="fader" style="--f:34%"></div><div class="vu"><i style="--v:54%"></i></div></div><div class="ms"><b>M</b><b class="on">S</b></div></div>
+      <div class="ch" style="--c:var(--vocal)"><div class="nm">Vocal</div><div class="knob" style="--k:140deg"></div><div class="faderwrap"><div class="fader" style="--f:44%"></div><div class="vu"><i style="--v:38%"></i></div></div><div class="ms"><b>M</b><b>S</b></div></div>
+      <div class="ch" style="--c:var(--text);background:color-mix(in srgb,var(--surface) 70%,var(--primary) 12%)"><div class="nm">Master</div><div class="knob" style="--k:140deg"></div><div class="faderwrap"><div class="fader" style="--f:22%"></div><div class="vu"><i style="--v:82%"></i></div></div><div class="ms"><b class="on" style="width:34px">LIM</b></div></div>
+    </div>
+    <div style="padding:0 14px 8px"><div class="card" style="padding:10px 12px"><div class="row" style="font-size:12px;font-weight:700"><span class="grow">Loudness (short-term)</span><span style="color:var(--good)">−13.8 LUFS</span></div><div class="meter" style="margin-top:7px"><i style="--v:70%"></i></div><div class="lufs"><span>−24</span><span>target −14 (streaming)</span><span>0</span></div></div></div>
+    <div class="transport"><div class="btn sq"><svg class="i"><use href="#skipstart"/></svg></div><div class="play"><svg><use href="#play"/></svg></div><div class="time grow"><b>0:00.0</b><br><span>Bar 1</span></div><div class="btn sq" style="color:var(--primary)"><svg class="i"><use href="#mixer"/></svg></div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Record to Vocal</b><span>Built-in mic · 48 kHz</span></div></div>
+    <div style="padding:4px 20px"><div class="card" style="padding:12px 14px;display:flex;gap:10px;align-items:center"><svg class="i" style="color:var(--primary)"><use href="#mic"/></svg><div class="grow" style="font-size:12.5px"><b>Tip:</b> use headphones so the beat doesn't leak into your recording.</div></div></div>
+    <div class="ring"><div><div class="muted" style="font-size:12px;font-weight:700;letter-spacing:.8px">RECORDING</div><b>0:12</b><div class="muted" style="font-size:11.5px">Bar 4 · beat 2</div></div></div>
+    <div style="padding:0 24px"><div class="row" style="font-size:11.5px;font-weight:700;margin-bottom:6px"><span class="grow">Input level</span><span style="color:var(--good)">−9 dB · healthy</span></div><div class="meter"><i style="--v:58%"></i></div>
+      <div class="wf" style="--c:var(--vocal);margin-top:16px;height:54px;justify-content:center" id="wfRec"></div></div>
+    <div style="margin-top:auto;padding:0 22px 26px;display:grid;gap:12px;justify-items:center">
+      <div class="row"><div class="chip">Count-in: 1 bar</div><div class="chip on"><svg class="i" style="width:14px;height:14px"><use href="#metro"/></svg>Click on</div></div>
+      <div class="row" style="gap:26px"><div class="btn sq" style="width:52px;height:52px"><svg class="i"><use href="#trash"/></svg></div><div class="pulse" style="width:78px;height:78px;border-radius:50%;background:var(--danger);display:grid;place-items:center;color:#fff;box-shadow:0 0 0 8px color-mix(in srgb,var(--danger) 25%,transparent)"><svg class="i f" style="width:30px;height:30px"><use href="#stop"/></svg></div><div class="btn sq" style="width:52px;height:52px"><svg class="i"><use href="#check"/></svg></div></div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Mixer and recording</h3><p class="s">The “professional” layer: per-track control, loudness you can see, and a recording flow that explains itself.</p>
+    <ol class="notes">
+      <li><b>Channel strips</b>: pan knob, fader, live level meter, mute/solo, in the instrument's colour (F7).</li>
+      <li><b>Master with a limiter and a loudness meter</b> — you see −13.8 LUFS against a −14 streaming target, and the clip warning that the old always-on soft-clip hid (P10).</li>
+      <li><b>Record screen</b>: big elapsed time, ring progress, live input meter with a plain verdict (“healthy”), live waveform (F9).</li>
+      <li><b>Count-in and click</b> make takes land in time; after the take, a ✓ keeps it and a bin discards it (N3).</li>
+      <li><b>Headphone tip</b> prevents speaker bleed — the single biggest cause of bad first recordings.</li>
+      <li><b>Mic permission dead-end fixed:</b> if the system dialog was denied twice this screen replaces it with “Microphone is off — open Settings” and a button that jumps there (N2).</li>
+    </ol>
+    <p class="gaps">Closes F7, F9, N2, N3, P10 · roadmap <code>MIX-3</code>, <code>MIX-6</code>, <code>DSP-2</code>, <code>IO-5</code>, <code>TIME-3</code>, <code>IO-V2</code></p>
+  </div>
+</div>
+
+<!-- ============================================================ EXPORT -->
+<h2 id="share">6 · Export &amp; share</h2>
+<div class="spec">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Share your beat</b><span>Midnight Groove · 1:42</span></div></div>
+    <div class="xcard"><div style="font-weight:800;font-size:19px;letter-spacing:-.3px">Midnight Groove</div><div style="opacity:.7;font-size:12px;margin-bottom:10px">Made with BeatWave · 96 BPM · C minor</div><div class="xwave" id="xw"></div></div>
+    <div class="sect" style="padding-top:16px">Format</div>
+    <div class="seg"><div>WAV 24</div><div class="on">AAC (small)</div><div>WAV 16</div></div>
+    <div class="sect">Loudness</div>
+    <div class="scroll-x"><div class="chip on">Streaming −14</div><div class="chip">Louder −9</div><div class="chip">Don't change</div></div>
+    <div class="card" style="margin:12px 14px 0;padding:11px 13px;font-size:12px"><div class="row"><span class="grow">Estimated size</span><b>1.6 MB</b></div><div class="row" style="margin-top:4px"><span class="grow">Peak after limiter</span><b style="color:var(--good)">−1.0 dBTP · no clipping</b></div></div>
+    <div style="margin-top:auto;padding:0 14px 28px;display:grid;gap:10px"><div class="btn p" style="justify-content:center;padding:15px;font-size:15px"><svg class="i"><use href="#share"/></svg>Share</div><div class="btn" style="justify-content:center">Save to device</div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="t"><b>Exporting…</b><span>Rendering Midnight Groove</span></div></div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:18px;padding:0 28px">
+      <div style="position:relative;width:170px;height:170px;border-radius:50%;background:conic-gradient(var(--primary) 0 68%,var(--surface2) 68% 100%);display:grid;place-items:center"><div style="position:absolute;inset:11px;border-radius:50%;background:var(--bg)"></div><b style="position:relative;font-size:34px">68%</b></div>
+      <div class="muted" style="text-align:center;font-size:13px">You can keep editing — the export runs in the background and we'll tell you when it's ready.</div>
+      <div class="btn">Cancel</div>
+    </div>
+    <div class="card" style="margin:0 14px 28px;padding:12px 14px;display:flex;gap:10px;align-items:center"><div style="width:34px;height:34px;border-radius:50%;background:color-mix(in srgb,var(--good) 22%,transparent);display:grid;place-items:center;color:var(--good)"><svg class="i"><use href="#check"/></svg></div><div class="grow" style="font-size:12.5px"><b>Bus Ride Beat.m4a</b><div class="muted" style="font-size:11px">Ready · 1.1 MB</div></div><div class="btn" style="padding:6px 12px">Share</div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Export</h3><p class="s">A share card people actually post, and an export that does not freeze the app.</p>
+    <ol class="notes">
+      <li><b>Share card</b> with waveform and title — a pretty thing to send, not a bare file (A10, F15).</li>
+      <li><b>Format as a segmented control</b>: small AAC for messaging, WAV 24-bit for producers (F16).</li>
+      <li><b>Loudness targets</b> with an honest readout of peak after limiting (P10, <code>DSP-8</code>).</li>
+      <li><b>Progress ring, cancel, and background export</b> — no more locked engine during a long render (P8).</li>
+      <li><b>Done card</b> persists so the share isn't lost if you leave the screen.</li>
+    </ol>
+    <p class="gaps">Closes F15, F16, A10, P8 · roadmap <code>EXPORT-5</code>, <code>PERF-V2</code>, <code>DSP-8</code></p>
+  </div>
+</div>
+
+<!-- ============================================================ EXPLORER -->
+<h2 id="explorer">7 · Explorer layer <small>pre-readers to ~8 · its own palette</small></h2>
+<p class="lede">Shown in a warm light palette in both themes. Almost no text, read-aloud on tap, 64 dp targets, nothing to lose or break. Every project it makes opens in Studio unchanged.</p>
+<div class="spec explorer" style="background:#fff7e6;border-color:#f0dcae;color:#2B2140">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar" style="padding-top:2px"><div class="kbtn" style="width:50px;height:50px;border-radius:18px"><svg class="i" style="width:26px;height:26px"><use href="#home"/></svg></div><div class="grow"></div><div class="kbtn" style="width:50px;height:50px;border-radius:18px"><svg class="i" style="width:26px;height:26px"><use href="#vol"/></svg></div></div>
+    <div class="speech"><span style="font-size:28px">👋</span>Tap a pad!</div>
+    <div class="pads" style="margin-top:14px">
+      <div class="pad hit" style="--c:var(--drum)">🥁<small>DRUM</small></div>
+      <div class="pad" style="--c:var(--bass)">🎸<small>BASS</small></div>
+      <div class="pad" style="--c:var(--synth)">🎹<small>KEYS</small></div>
+      <div class="pad" style="--c:var(--vocal)">🎤<small>VOICE</small></div>
+    </div>
+    <div style="margin-top:auto;padding:0 18px 28px;display:flex;align-items:center;justify-content:space-between">
+      <div class="kbtn"><svg class="i" style="width:30px;height:30px"><use href="#undo"/></svg></div>
+      <div class="bigplay"><svg><use href="#play"/></svg></div>
+      <div class="kbtn" style="font-size:20px">▦</div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar" style="padding-top:2px"><div class="kbtn" style="width:50px;height:50px;border-radius:18px"><svg class="i" style="width:26px;height:26px"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="grow"></div><div class="kbtn" style="width:50px;height:50px;border-radius:18px;font-size:22px">🔊</div></div>
+    <div class="speech" style="margin-bottom:16px"><span style="font-size:28px">🎶</span>Make a pattern!</div>
+    <div style="display:grid;gap:12px;padding-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px;padding:0 18px;font-weight:800;font-size:13px"><span style="font-size:26px">🥁</span></div>
+      <div class="strip" id="stripD" style="--c:var(--drum)"></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:0 18px;font-weight:800;font-size:13px"><span style="font-size:26px">🎹</span></div>
+      <div class="strip" id="stripK" style="--c:var(--synth)"></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:0 18px;font-weight:800;font-size:13px"><span style="font-size:26px">🎸</span></div>
+      <div class="strip" id="stripB" style="--c:var(--bass)"></div>
+    </div>
+    <div style="margin:auto 0 26px;display:flex;justify-content:space-around;align-items:center;padding:0 18px">
+      <div class="kbtn" style="font-size:22px">🐢</div><div class="bigplay"><svg><use href="#pause"/></svg></div><div class="kbtn" style="font-size:22px">🐇</div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0 24px;text-align:center">
+      <div style="font-size:84px;line-height:1">🎉</div>
+      <div style="font-weight:900;font-size:30px;letter-spacing:-.5px">You made a beat!</div>
+      <div class="stars"><span>⭐</span><span>⭐</span><span>⭐</span></div>
+      <div class="muted" style="font-size:15px;font-weight:700">3 sounds · 8 steps</div>
+      <div style="display:flex;gap:16px;margin-top:18px">
+        <div class="kbtn" style="width:84px;height:84px;font-size:36px;background:#fff">🔁</div>
+        <div class="kbtn" style="width:84px;height:84px;font-size:36px;background:#fff">✏️</div>
+        <div class="kbtn" style="width:84px;height:84px;font-size:36px;background:#fff">💾</div>
+      </div>
+      <div class="muted" style="font-size:13px;margin-top:6px">Again · Change · Keep</div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Explorer — pads, pattern, celebrate</h3><p class="s">Three screens: free play, make a pattern, you did it.</p>
+    <ol class="notes">
+      <li><b>Pads are the entry.</b> Four big pads (drums, bass, keys, voice); a tap plays instantly and the pad presses down. Cause and effect in under a second (F3, A2).</li>
+      <li><b>Pictures, not words</b>, with a talking speech bubble; tapping it reads the line aloud (needs strings externalized — F14).</li>
+      <li><b>Pattern strips</b>: 8 big squares per instrument, snapped to a grid so everything sounds in time; the current step lifts as it plays.</li>
+      <li><b>Slower 🐢 / faster 🐇</b> instead of a BPM number.</li>
+      <li><b>Celebrate making, not returning.</b> Stars reward <i>creating</i>; there are no streaks, timers or loss messages (§6 guardrail).</li>
+      <li><b>Again · Change · Keep</b> — a child can never lose work; “Keep” saves to Music and it opens in Studio.</li>
+      <li><b>No recording, no import, no share</b> unless a guardian turns them on (F17).</li>
+    </ol>
+    <p class="gaps">Closes F1, F3, F14, F17 · A2, A7 · roadmap <code>PERF-4</code>, <code>PRODUCT-2</code>, <code>GAP1-8</code> (revisit)</p>
+  </div>
+</div>
+
+<!-- ============================================================ ACTIVITIES -->
+<h2 id="activities">8 · Activities <small>things to do, for Maker to Pro</small></h2>
+<div class="spec">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="t"><b>Play</b><span>Pick something to try</span></div></div>
+    <div class="scroll-x" style="padding-bottom:10px"><div class="chip on">All ages</div><div class="chip">Little</div><div class="chip">Maker</div><div class="chip">Producer</div></div>
+    <div style="display:grid;gap:10px;padding:0 14px">
+      <div class="card row" style="padding:14px;gap:14px"><div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,var(--primary),var(--primary2));display:grid;place-items:center;color:#fff"><svg class="i"><use href="#play"/></svg></div><div class="grow"><b>First Beat</b><div class="muted" style="font-size:11.5px">60 seconds · guided</div></div><span class="chip">Start</span></div>
+      <div class="card row" style="padding:14px;gap:14px"><div style="width:52px;height:52px;border-radius:16px;background:var(--drum);display:grid;place-items:center;color:#fff"><svg class="i"><use href="#drum"/></svg></div><div class="grow"><b>Copy the Beat</b><div class="muted" style="font-size:11.5px">Listen, then recreate it</div></div><span class="chip">Play</span></div>
+      <div class="card row" style="padding:14px;gap:14px"><div style="width:52px;height:52px;border-radius:16px;background:var(--synth);display:grid;place-items:center;color:#fff"><svg class="i"><use href="#keys"/></svg></div><div class="grow"><b>Melody Maker</b><div class="muted" style="font-size:11.5px">Can't-sound-wrong notes</div></div><span class="chip">Play</span></div>
+      <div class="card row" style="padding:14px;gap:14px"><div style="width:52px;height:52px;border-radius:16px;background:var(--vocal);display:grid;place-items:center;color:#fff"><svg class="i"><use href="#mic"/></svg></div><div class="grow"><b>Voice Instrument</b><div class="muted" style="font-size:11.5px">Record, then play it as keys</div></div><span class="chip">Play</span></div>
+      <div class="card row" style="padding:14px;gap:14px"><div style="width:52px;height:52px;border-radius:16px;background:var(--bass);display:grid;place-items:center;color:#fff"><svg class="i"><use href="#trophy"/></svg></div><div class="grow"><b>Pro Challenge</b><div class="muted" style="font-size:11.5px">Mix to −14 LUFS</div></div><span class="chip">Try</span></div>
+    </div>
+    <div class="nav"><div><svg class="i"><use href="#home"/></svg>Music</div><div><svg class="i"><use href="#note"/></svg>Sounds</div><div class="on"><svg class="i"><use href="#trophy"/></svg>Play</div><div><svg class="i"><use href="#gear"/></svg>Settings</div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Copy the Beat</b><span>Round 2 of 5</span></div></div>
+    <div style="padding:6px 14px"><div class="card" style="padding:12px 14px"><div class="row" style="font-weight:700;font-size:12px"><span class="grow">Listen</span><span class="chip" style="padding:5px 10px"><svg class="i f" style="width:12px;height:12px"><use href="#play"/></svg>Hear it again</span></div>
+      <div class="lane" style="margin-top:10px;--c:var(--drum);grid-template-columns:repeat(8,1fr)"><div class="c on"></div><div class="c"></div><div class="c on"></div><div class="c"></div><div class="c on"></div><div class="c"></div><div class="c on"></div><div class="c on"></div></div></div></div>
+    <div style="padding:2px 14px"><div class="muted" style="font-size:12px;font-weight:700;margin:4px 2px 6px">Your turn</div>
+      <div class="card" style="padding:12px 14px"><div class="lane" style="--c:var(--drum);grid-template-columns:repeat(8,1fr)"><div class="c on"></div><div class="c"></div><div class="c on"></div><div class="c"></div><div class="c on"></div><div class="c"></div><div class="c"></div><div class="c"></div></div></div></div>
+    <div style="padding:14px"><div class="card" style="padding:14px;display:flex;gap:12px;align-items:center;border-color:var(--good)"><div style="font-size:30px">👏</div><div class="grow"><b>So close!</b><div class="muted" style="font-size:12px">6 of 8 steps match. Two to fix.</div></div></div></div>
+    <div style="margin-top:auto;padding:0 14px 28px;display:flex;gap:10px"><div class="btn grow" style="justify-content:center">Show hint</div><div class="btn p grow" style="justify-content:center">Check</div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Activities hub &amp; Copy the Beat</h3><p class="s">The tool becomes a place to play. Filter by level; every activity is the same grid underneath.</p>
+    <ol class="notes">
+      <li><b>One list, filtered by level</b> (All ages · Little · Maker · Producer), so a family sees things for everyone (A1–A12).</li>
+      <li><b>Copy the Beat</b>: hear a pattern, rebuild it, get kind feedback — “6 of 8 match”, never “wrong” (A3).</li>
+      <li><b>Hints, not penalties.</b> Hint reveals one step; there is no failure state and no timer.</li>
+      <li><b>Melody Maker and Voice Instrument</b> reuse key lock and recording — the engine work is shared (A7, A8).</li>
+      <li><b>Pro challenges</b> keep adults engaged with real goals (−14 LUFS, odd time signatures) (A12).</li>
+    </ol>
+    <p class="gaps">Closes A1–A12 (hub and first activity shown) · depends on audition, templates, tempo, undo</p>
+  </div>
+</div>
+
+<!-- ============================================================ GUARDIAN -->
+<h2 id="guardian">9 · Guardian &amp; settings</h2>
+<div class="spec">
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b>Settings</b><span>BeatWave 1.0</span></div></div>
+    <div class="sect" style="padding-top:4px">Experience</div>
+    <div class="seg"><div>Explorer</div><div class="on">Studio</div><div>Pro</div></div>
+    <div class="sect">Appearance</div>
+    <div class="card" style="margin:0 14px"><div class="toggle-row"><div class="grow"><b>Theme</b><div class="muted" style="font-size:11.5px">Follow system</div></div><span class="chip">Auto</span></div><div class="toggle-row"><div class="grow"><b>Large text</b></div><div class="sw on"></div></div><div class="toggle-row"><div class="grow"><b>High contrast</b></div><div class="sw"></div></div><div class="toggle-row"><div class="grow"><b>Reduce motion</b></div><div class="sw"></div></div></div>
+    <div class="sect">Guardian controls</div>
+    <div class="card" style="margin:0 14px"><div class="toggle-row"><svg class="i" style="color:var(--primary)"><use href="#lock"/></svg><div class="grow"><b>Guardian PIN</b><div class="muted" style="font-size:11.5px">Required to change these</div></div><span class="chip on">On</span></div><div class="toggle-row"><div class="grow"><b>Microphone</b><div class="muted" style="font-size:11.5px">Recording and voice instrument</div></div><div class="sw"></div></div><div class="toggle-row"><div class="grow"><b>Import sounds</b></div><div class="sw"></div></div><div class="toggle-row"><div class="grow"><b>Share &amp; export</b></div><div class="sw"></div></div></div>
+    <div class="muted" style="margin:12px 18px 0;font-size:11.5px"><b style="color:var(--text)">Everything stays on this device.</b> No account, no ads, no tracking.</div>
+    <div class="home-ind"></div></div></div>
+  <div class="device"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div></div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px">
+      <div style="width:64px;height:64px;border-radius:20px;margin:0 auto;background:color-mix(in srgb,var(--primary) 20%,var(--surface));display:grid;place-items:center;color:var(--primary)"><svg class="i" style="width:30px;height:30px"><use href="#lock"/></svg></div>
+      <h3 style="text-align:center;font-size:22px;letter-spacing:-.4px">Guardian PIN</h3>
+      <p class="muted" style="text-align:center;font-size:13px;padding:0 40px">Enter your 4-digit PIN to turn the microphone on.</p>
+      <div class="dots"><i class="f"></i><i class="f"></i><i></i><i></i></div>
+      <div class="pin"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div><div></div><div>0</div><div>⌫</div></div>
+      <div class="muted" style="text-align:center;font-size:12px;margin-top:8px">Forgot PIN? Reset with your device lock.</div>
+    </div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Settings &amp; guardian gate</h3><p class="s">One place for appearance, accessibility and the controls that protect younger users.</p>
+    <ol class="notes">
+      <li><b>Experience layer</b> is a setting, not an age question — the app never asks a child how old they are (F1).</li>
+      <li><b>Appearance &amp; access in the first screen</b>: theme, large text, high contrast, reduce motion (F6, Access band).</li>
+      <li><b>Guardian PIN</b> guards mode, microphone, import, share. A PIN, not a maths puzzle a bright 8-year-old can solve; reset uses the device lock (F17).</li>
+      <li><b>Microphone, import and share default OFF</b> in Explorer; ON in Studio/Pro (§8 compliance checklist).</li>
+      <li><b>Privacy in plain words</b> — and true: the app has no network code (verified).</li>
+    </ol>
+    <p class="gaps">Closes F1, F6, F13, F17 · roadmap: <b>new</b> (not in earlier plans)</p>
+  </div>
+</div>
+
+<!-- ============================================================ ACCESSIBILITY -->
+<h2 id="access">10 · Accessibility variants</h2>
+<div class="spec">
+  <div class="device big"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq" style="width:52px;height:52px"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b style="font-size:20px">Midnight Groove</b><span style="font-size:13px">Large text · 1.5×</span></div></div>
+    <div class="scroll-x" style="padding-bottom:10px"><div class="chip on"><span class="dot" style="--c:var(--synth)"></span>Synth</div><div class="chip"><span class="dot" style="--c:var(--drum)"></span>Drums</div><div class="chip"><span class="dot" style="--c:var(--bass)"></span>Bass</div></div>
+    <div class="scroll-x" style="padding-bottom:10px"><div class="chip"><svg class="i"><use href="#note"/></svg>Sounds</div><div class="chip on focus">C minor</div><div class="chip">96 BPM</div></div>
+    <div class="roll" style="--rows:7;--cols:8;flex:1"><div class="keys" id="keysC"></div><div class="field" id="fieldC" style="--rows:7;--cols:8"></div></div>
+    <div class="card" style="margin:8px 12px;padding:12px 14px;font-size:14px"><b>Selected cell (read by TalkBack):</b><br>“Filled, Eb5, bar 2 beat 1 step 1, double tap to remove.”</div>
+    <div class="transport"><div class="btn sq" style="width:56px;height:56px"><svg class="i"><use href="#skipstart"/></svg></div><div class="play" style="width:64px;height:64px"><svg><use href="#play"/></svg></div><div class="time grow"><b style="font-size:19px">0:05.2</b></div><div class="btn sq" style="width:56px;height:56px"><svg class="i"><use href="#metro"/></svg></div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="device hc big"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="appbar"><div class="btn sq" style="width:52px;height:52px;border:2px solid #fff"><svg class="i"><use href="#chev" style="transform:rotate(90deg);transform-origin:center"/></svg></div><div class="t"><b style="font-size:20px">Midnight Groove</b><span style="font-size:13px">High contrast</span></div></div>
+    <div class="scroll-x" style="padding-bottom:10px"><div class="chip on" style="border-width:3px"><span class="dot" style="--c:#fff"></span>Synth</div><div class="chip" style="border-width:2px">Drums</div><div class="chip" style="border-width:2px">Bass</div></div>
+    <div class="roll" style="--rows:7;--cols:8;flex:1"><div class="keys" id="keysD"></div><div class="field" id="fieldD" style="--rows:7;--cols:8"></div></div>
+    <div class="transport" style="border:2px solid #fff"><div class="btn sq" style="width:56px;height:56px;border:2px solid #fff"><svg class="i"><use href="#skipstart"/></svg></div><div class="play" style="width:64px;height:64px"><svg><use href="#play"/></svg></div><div class="time grow"><b style="font-size:19px">0:05.2</b></div><div class="btn sq" style="width:56px;height:56px;border:2px solid #fff"><svg class="i"><use href="#metro"/></svg></div></div>
+    <div class="home-ind"></div></div></div>
+  <div class="col">
+    <h3>Large text · high contrast · screen reader</h3><p class="s">The same screen at 1.5× text with 56 dp targets, and a pure high-contrast token set.</p>
+    <ol class="notes">
+      <li><b>Large text reflows, never clips</b>: rows scroll, the header never squeezes the track row (shipped for pills) (N9, N10).</li>
+      <li><b>56 dp targets</b> in the large preset; the transport grows with it (N8).</li>
+      <li><b>High-contrast tokens</b> — black/white/yellow with outlines instead of glows; notes keep their shape and a heavy outline so colour is never the only signal.</li>
+      <li><b>Focus ring</b> in the accent colour for keyboard, D-pad and Switch Access (<code>GAP1-V1</code>).</li>
+      <li><b>TalkBack reads position and pitch</b> — “Filled, Eb5, bar 2 beat 1 step 1” (shipped; now with note names) and long notes can be created without dragging (<code>GAP1-5</code>) (N15).</li>
+      <li><b>Reduce motion</b> freezes glows, meters and the playhead sweep to a stepped indicator.</li>
+    </ol>
+    <p class="gaps">Closes N8–N10, N15, Access band · roadmap <code>GAP1-4</code>, <code>GAP1-5</code>, <code>GAP1-V1</code>, <code>GAP1-7</code></p>
+  </div>
+</div>
+
+<!-- ============================================================ LARGE -->
+<h2 id="large">11 · Large screens <small>tablet and unfolded Fold</small></h2>
+<div class="spec">
+  <div class="device wide"><div class="screen">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div style="display:grid;grid-template-columns:230px 1fr 190px;flex:1;min-height:0;gap:0">
+      <div style="border-right:1px solid var(--line);padding:10px;overflow:hidden;background:var(--bg2)">
+        <div style="font-weight:800;font-size:15px;margin-bottom:10px">Tracks</div>
+        <div style="display:grid;gap:7px">
+          <div class="card row" style="padding:9px;border-color:var(--synth);--c:var(--synth)"><span class="dot"></span><div class="grow"><b style="font-size:12px">Synth Arp</b><div class="muted" style="font-size:10px">C minor pent.</div></div><div class="ms"><b>M</b><b>S</b></div></div>
+          <div class="card row" style="padding:9px"><span class="dot" style="--c:var(--drum)"></span><div class="grow"><b style="font-size:12px">Drums</b><div class="muted" style="font-size:10px">Boom Bap Kit</div></div><div class="ms"><b>M</b><b>S</b></div></div>
+          <div class="card row" style="padding:9px"><span class="dot" style="--c:var(--bass)"></span><div class="grow"><b style="font-size:12px">Bass Riff</b><div class="muted" style="font-size:10px">Sub bass</div></div><div class="ms"><b>M</b><b class="on">S</b></div></div>
+          <div class="card row" style="padding:9px"><span class="dot" style="--c:var(--vocal)"></span><div class="grow"><b style="font-size:12px">Vocal</b><div class="muted" style="font-size:10px">Voice take 2</div></div><div class="ms"><b>M</b><b>S</b></div></div>
+          <div class="chip" style="justify-content:center;opacity:.7"><svg class="i" style="width:14px;height:14px"><use href="#plus"/></svg>Add track</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;min-width:0">
+        <div class="appbar"><div class="t"><b>Midnight Groove</b><span>Saved · 96 BPM · C minor pent.</span></div><div class="btn sq"><svg class="i"><use href="#undo"/></svg></div><div class="btn sq" style="opacity:.45"><svg class="i"><use href="#redo"/></svg></div><div class="btn sq"><svg class="i"><use href="#share"/></svg></div></div>
+        <div class="ruler" style="--bars:8"><div></div><div class="rf"><div class="loop" style="--a:0;--w:4"></div><i style="--b:0">1</i><i style="--b:1">2</i><i style="--b:2">3</i><i style="--b:3">4</i><i style="--b:4">5</i><i style="--b:5">6</i><i style="--b:6">7</i><i style="--b:7">8</i></div></div>
+        <div class="roll" style="--rows:13;--cols:32"><div class="keys" id="keysW"></div><div class="field" id="fieldW" style="--rows:13;--cols:32"></div></div>
+        <div class="vel" id="velW" style="height:38px"></div>
+      </div>
+      <div style="border-left:1px solid var(--line);padding:10px;background:var(--bg2);overflow:hidden">
+        <div style="font-weight:800;font-size:15px;margin-bottom:10px">Inspector</div>
+        <div class="card" style="padding:10px;display:grid;gap:9px;font-size:11.5px">
+          <div><b>Eb5</b> · bar 2 · ½ beat</div>
+          <div><div class="row" style="font-weight:700;margin-bottom:4px"><span class="grow">Volume</span><span class="muted">−6 dB</span></div><div class="meter" style="height:7px"><i style="--v:62%;background:var(--primary)"></i></div></div>
+          <div><div class="row" style="font-weight:700;margin-bottom:4px"><span class="grow">Fine tune</span><span class="muted">+12 ¢</span></div><div class="meter" style="height:7px"><i style="--v:54%;background:var(--primary2)"></i></div></div>
+          <div class="row"><div class="chip" style="padding:5px 9px">Copy</div><div class="chip" style="padding:5px 9px">Delete</div></div>
+        </div>
+        <div style="font-weight:800;font-size:15px;margin:14px 0 8px">Master</div>
+        <div class="card" style="padding:10px;font-size:11.5px"><div class="row" style="font-weight:700"><span class="grow">Loudness</span><span style="color:var(--good)">−13.8</span></div><div class="meter" style="margin-top:6px;height:9px"><i style="--v:70%"></i></div></div>
+      </div>
+    </div>
+    <div class="transport" style="margin:6px 14px 12px"><div class="btn sq"><svg class="i"><use href="#skipstart"/></svg></div><div class="play" style="width:48px;height:48px"><svg><use href="#pause"/></svg></div><div class="time"><b>0:05.2</b><br><span>Bar 3 · beat 2</span></div><div class="grow"></div><div class="chip">96 BPM</div><div class="btn sq" style="color:var(--primary)"><svg class="i"><use href="#loop"/></svg></div><div class="btn sq"><svg class="i"><use href="#metro"/></svg></div><div class="btn sq"><svg class="i"><use href="#mixer"/></svg></div></div>
+    <div class="home-ind" style="display:none"></div></div></div>
+  <div class="col">
+    <h3>Tablet / unfolded Fold — Pro layout</h3><p class="s">Three panes: tracks · grid · inspector. This is the deferred two-pane grid, grown into a real workspace.</p>
+    <ol class="notes">
+      <li><b>Track list is a column</b>, with mute/solo on every row and a key colour for each instrument (F7, F19).</li>
+      <li><b>The grid gets the whole centre</b>: 8 bars visible, a velocity lane underneath, a loop brace on the ruler, 32 columns at once (P2/P3 need the virtualized canvas first).</li>
+      <li><b>Inspector on the right</b> shows the selected note and master loudness — no modal, no sheet.</li>
+      <li><b>Transport spans the bottom</b> with tempo, loop and metronome within reach of the thumbs.</li>
+      <li><b>Adapts by window size, not device name</b>: the same layout appears in a split-screen window or on a desktop-mode display; on the closed Fold's cover screen it collapses to the phone layout from §3.</li>
+      <li><b>Keyboard &amp; stylus</b>: arrows move, Enter places, Space plays; S Pen hover shows the note name before you touch (<code>GAP1-V1</code>).</li>
+    </ol>
+    <p class="gaps">Closes F19, F7, F11 · roadmap <code>UX-1</code>, <code>MIX-3</code>, <code>GAP1-V1</code>, spec deferral (two-pane grid)</p>
+  </div>
+</div>
+
+<h2>What this is, and isn't</h2>
+<p class="lede">These are static design mockups — a proposal and a vocabulary for the redesign, not working UI. Colours, spacing and copy are first drafts; the emoji in the Explorer layer stand in for custom illustrations. Nothing has been tested with children or educators. Build order and dependencies are in the gap audit (§10): trust the audio first, then the design system, undo, audition and strings, then the layers.</p>
+</main>
+
+<script>
+/* theme toggle (remembers choice when storage is available) */
+(function(){
+  var root=document.documentElement, k="bw-mock-theme";
+  try{var s=localStorage.getItem(k); if(s) root.dataset.theme=s;}catch(e){}
+  document.getElementById("themeBtn").onclick=function(){
+    var n=root.dataset.theme==="dark"?"light":"dark"; root.dataset.theme=n;
+    try{localStorage.setItem(k,n)}catch(e){}
+  };
+})();
+
+/* ---------- melodic piano-roll generator ---------- */
+var NAMES=["C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"];
+function roll(prefix, rows, cols, top, scale, notes, o){
+  o=o||{};
+  var keys=document.getElementById("keys"+prefix), field=document.getElementById("field"+prefix);
+  if(!keys||!field) return;
+  var kh="",fh="";
+  for(var r=0;r<rows;r++){
+    var m=top-r, name=NAMES[((m%12)+12)%12], oct=Math.floor(m/12)-1, isBlack=name.length>1;
+    var inScale=scale.indexOf(((m%12)+12)%12)>-1, root=(((m%12)+12)%12)===0;
+    kh+='<div class="'+(isBlack?"blk ":"")+(root?"root ":"")+(inScale?"":"out")+'">'+name+oct+'</div>';
+    fh+='<div class="band'+(inScale?"":" out")+'" style="--r:'+r+'"></div>';
+  }
+  keys.innerHTML=kh;
+  notes.forEach(function(n){
+    fh+='<div class="note'+(n.s?" sel":"")+'" style="--c:'+n.c+';--r:'+n.r+';--l:'+n.l+';--n:'+(n.k||"var(--synth)")+'"></div>';
+  });
+  if(o.ph!=null) fh+='<div class="playhead" style="--p:'+o.ph+'"></div>';
+  field.innerHTML=fh;
+}
+var CMINPENT=[0,3,5,7,10];
+roll("A",13,16,76,CMINPENT,[
+  {c:0,r:3,l:2},{c:2,r:5,l:1},{c:3,r:2,l:2},{c:5,r:6,l:1},{c:6,r:4,l:2},{c:8,r:2,l:2},{c:10,r:5,l:1,s:1},
+  {c:11,r:8,l:2},{c:13,r:4,l:1},{c:14,r:6,l:2},{c:1,r:10,l:3,k:"var(--bass)"},{c:8,r:11,l:4,k:"var(--bass)"}
+],{ph:6.4});
+roll("B",9,16,72,CMINPENT,[{c:0,r:2,l:2},{c:2,r:4,l:1},{c:3,r:1,l:2},{c:5,r:3,l:2},{c:8,r:3,l:1,s:1},{c:9,r:5,l:2},{c:11,r:2,l:3},{c:14,r:4,l:2}]);
+roll("C",7,8,70,CMINPENT,[{c:0,r:2,l:2},{c:2,r:4,l:1,s:1},{c:3,r:1,l:2},{c:5,r:3,l:2},{c:7,r:5,l:1}]);
+roll("D",7,8,70,CMINPENT,[{c:0,r:2,l:2},{c:2,r:4,l:1,s:1},{c:3,r:1,l:2},{c:5,r:3,l:2},{c:7,r:5,l:1}]);
+roll("W",13,32,76,CMINPENT,[
+  {c:0,r:3,l:2},{c:2,r:5,l:1},{c:3,r:2,l:2},{c:5,r:6,l:1},{c:6,r:4,l:2},{c:8,r:2,l:2},{c:10,r:5,l:1,s:1},{c:11,r:8,l:2},{c:13,r:4,l:1},{c:14,r:6,l:2},
+  {c:16,r:3,l:2},{c:18,r:5,l:1},{c:19,r:2,l:2},{c:21,r:6,l:1},{c:22,r:4,l:2},{c:24,r:2,l:2},{c:26,r:5,l:1},{c:27,r:8,l:2},{c:29,r:4,l:1},{c:30,r:6,l:2},
+  {c:1,r:10,l:3,k:"var(--bass)"},{c:8,r:11,l:4,k:"var(--bass)"},{c:17,r:10,l:3,k:"var(--bass)"},{c:24,r:11,l:4,k:"var(--bass)"}
+],{ph:10.4});
+function velBars(id,n,left){var e=document.getElementById(id);if(!e)return;var h="";for(var i=0;i<n;i++){h+='<i style="height:'+(30+((i*37)%70))+'%"></i>'}e.innerHTML=h;}
+velBars("velB",16);velBars("velW",32);velBars("velD",16);
+
+/* ---------- drum lanes ---------- */
+(function(){
+  var el=document.getElementById("drumA"); if(!el) return;
+  var lanes=[
+    ["Kick","drum","var(--drum)",[0,4,8,10,12]],["Snare","drum","var(--vocal)",[4,12]],
+    ["Hat","wave","var(--synth)",[0,2,4,6,8,10,12,14]],["Clap","drum","var(--bass)",[4,6,12]]
+  ], h="";
+  lanes.forEach(function(l){
+    h+='<div class="lane" style="--c:'+l[2]+'"><div class="nm"><svg class="i"><use href="#'+l[1]+'"/></svg>'+l[0]+'</div>';
+    for(var i=0;i<16;i++){h+='<div class="c'+(i%4===0?" b4":"")+(l[3].indexOf(i)>-1?" on":"")+(i===5?" now":"")+'"></div>'}
+    h+='</div>';
+  });
+  el.innerHTML=h;
+})();
+
+/* ---------- misc generators ---------- */
+(function(){
+  function wf(sel,n,seed){document.querySelectorAll(sel).forEach(function(e){
+    var h="";for(var i=0;i<n;i++){h+='<i style="--h:'+(18+Math.abs(Math.sin(i*.7+seed))*70)+'%"></i>'}e.innerHTML=h;});}
+  wf(".srow .wf",26,1);wf("#wfRec",44,3);
+  var xw=document.getElementById("xw");if(xw){var h="";for(var i=0;i<46;i++){h+='<i style="--h:'+(14+Math.abs(Math.sin(i*.45)*Math.cos(i*.13))*86)+'%"></i>'}xw.innerHTML=h;}
+  function strip(id,on,now,icon){var e=document.getElementById(id);if(!e)return;var h="";
+    for(var i=0;i<8;i++){h+='<div class="b'+(on.indexOf(i)>-1?" on":"")+(i===now?" now":"")+'">'+(on.indexOf(i)>-1?icon:"")+'</div>'}e.innerHTML=h;}
+  strip("stripD",[0,2,4,6,7],4,"🥁");strip("stripK",[1,3,5],4,"🎹");strip("stripB",[0,4],4,"🎸");
+})();
+</script>
+</body>
+</html>
